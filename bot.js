@@ -77,8 +77,51 @@ function requireIngestKey(req, res, next) {
 }
 
 app.post('/api/round-complete', requireIngestKey, async (req, res) => {
-  console.log('Received round-complete payload:', req.body);
-  res.json({ received: true });
+  if (!supabase) return res.status(503).json({ error: 'database not configured' });
+
+  const { map, serverType, playerCount, averageLevel, gameVersion, players } = req.body;
+
+  if (!map || !Array.isArray(players) || players.length === 0) {
+    return res.status(400).json({ error: 'invalid payload: map and players[] are required' });
+  }
+
+  const { data: round, error: roundError } = await supabase
+    .from('round_logs')
+    .insert({
+      map,
+      server_type: serverType || 'regular',
+      player_count: playerCount ?? players.length,
+      average_level: averageLevel ?? null,
+      game_version: gameVersion ?? null,
+    })
+    .select('id')
+    .single();
+
+  if (roundError) {
+    console.error('[round-complete] failed to insert round_logs:', roundError.message);
+    return res.status(500).json({ error: roundError.message });
+  }
+
+  const playerRows = players.map(p => ({
+    round_id: round.id,
+    roblox_user_id: String(p.robloxUserId),
+    discord_id: p.discordId ? String(p.discordId) : null,
+    dino: p.dino ?? null,
+    weapon: p.weapon ?? null,
+    vehicle: p.vehicle ?? null,
+    level: p.level ?? null,
+    won: !!p.won,
+  }));
+
+  const { error: playersError } = await supabase.from('round_players').insert(playerRows);
+
+  if (playersError) {
+    console.error('[round-complete] failed to insert round_players:', playersError.message);
+    return res.status(500).json({ error: playersError.message });
+  }
+
+  console.log(`[round-complete] logged round ${round.id} on ${map} with ${playerRows.length} players`);
+  res.json({ received: true, roundId: round.id });
 });
 
 const port = process.env.PORT || 3000;
