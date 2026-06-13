@@ -6,6 +6,8 @@ module.exports = {
     .setDescription('Check that PrimalGame is online and responding'),
 
   async execute(interaction, { supabase }) {
+    if (interaction.replied || interaction.deferred) return;
+
     if (!supabase) {
       return interaction.reply('PrimalGame is online. (Supabase not connected)');
     }
