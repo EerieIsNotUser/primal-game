@@ -29,8 +29,18 @@ client.once('ready', () => {
   console.log(`PrimalGame logged in as ${client.user.tag} (pid ${process.pid})`);
 });
 
+const recentInteractionIds = new Set();
+
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
+
+  // Discord occasionally redelivers the same interaction (e.g. on gateway
+  // resume), producing a second interaction object whose replied/deferred
+  // flags both start false. Dedupe by interaction ID so only the first
+  // dispatch is processed.
+  if (recentInteractionIds.has(interaction.id)) return;
+  recentInteractionIds.add(interaction.id);
+  setTimeout(() => recentInteractionIds.delete(interaction.id), 60_000);
 
   const command = client.commands.get(interaction.commandName);
   if (!command) return;
