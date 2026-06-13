@@ -5,13 +5,12 @@ const express = require('express');
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
 
-// Supabase client
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+// Supabase client - optional until SUPABASE_URL / SUPABASE_SERVICE_KEY are set
+const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
+  : null;
 
 // Discord client
-// Guilds is enough for slash commands. Add more intents only when a feature
-// actually needs them - fewer intents means PrimalGame stays out of
-// Discord's privileged intent review.
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
 });
@@ -52,8 +51,6 @@ client.on('interactionCreate', async interaction => {
 client.login(process.env.DISCORD_TOKEN);
 
 // Ingestion API
-// Roblox (via KKG's script) will POST round-complete payloads here once the
-// payload shape is finalized. For now this is just a health check + stub.
 const app = express();
 app.use(express.json());
 
