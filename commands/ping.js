@@ -2,8 +2,8 @@ const { SlashCommandBuilder } = require('discord.js');
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('ping')
-    .setDescription('Check that PrimalGame is online and responding'),
+    .setName('pingtest')
+    .setDescription('Brand-new test command to isolate the 40060 issue'),
 
   async execute(interaction, { supabase }) {
     console.log('[ping] start', interaction.id, 'replied:', interaction.replied, 'deferred:', interaction.deferred);
