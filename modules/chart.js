@@ -32,14 +32,14 @@ async function buildLineChartUrl(labels, series, title) {
   const datasets = series.map((s, i) => {
     const color = s.color || PALETTE[i % PALETTE.length];
     // Lower alpha when there are multiple series, to avoid muddy overlap.
-    const fillAlpha = series.length > 1 ? 0.06 : 0.15;
+    const fillAlpha = series.length > 1 ? 0.12 : 0.35;
     return {
       label: s.label,
       data: s.data,
       fill: true,
       backgroundColor: hexToRgba(color, fillAlpha),
       borderColor: color,
-      borderWidth: 2.5,
+      borderWidth: 3.5,
       tension: 0.35,
       pointRadius: 0,
       pointHoverRadius: 4,
@@ -55,21 +55,21 @@ async function buildLineChartUrl(labels, series, title) {
           display: series.length > 1,
           position: 'top',
           align: 'start',
-          labels: { color: '#dcddde', boxWidth: 16 },
+          labels: { color: '#e8e9eb', boxWidth: 18, font: { size: 14 } },
         },
         title: title
-          ? { display: true, text: title, color: '#dcddde', align: 'start', font: { size: 16 } }
+          ? { display: true, text: title, color: '#e8e9eb', align: 'start', font: { size: 18, weight: 'bold' } }
           : { display: false },
       },
       scales: {
         x: {
-          ticks: { color: '#b9bbbe' },
-          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#dcddde', font: { size: 13 } },
+          grid: { color: 'rgba(255,255,255,0.07)' },
         },
         y: {
           beginAtZero: true,
-          ticks: { color: '#b9bbbe', precision: 0 },
-          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#dcddde', precision: 0, font: { size: 13 } },
+          grid: { color: 'rgba(255,255,255,0.07)' },
         },
       },
     },
@@ -78,8 +78,8 @@ async function buildLineChartUrl(labels, series, title) {
   const body = {
     chart: config,
     backgroundColor: '#2b2d31',
-    width: 800,
-    height: 400,
+    width: 1200,
+    height: 600,
     devicePixelRatio: 2,
   };
 
@@ -103,8 +103,8 @@ async function buildLineChartUrl(labels, series, title) {
   const params = new URLSearchParams({
     c: JSON.stringify(config),
     backgroundColor: '#2b2d31',
-    width: '800',
-    height: '400',
+    width: '1200',
+    height: '600',
     devicePixelRatio: '2',
   });
   return `${QUICKCHART_URL}?${params.toString()}`;
