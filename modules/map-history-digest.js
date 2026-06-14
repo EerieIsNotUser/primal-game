@@ -103,6 +103,8 @@ function mostAndLeast(countMap) {
   return { most: sorted[0], least: sorted[sorted.length - 1] };
 }
 
+const MAP_COLORS = [0x57F287, 0x5865F2, 0xFEE75C, 0xEB459E, 0xED4245, 0x9B59B6];
+
 function buildBreakdownEmbeds(perMap, mapOrder, EmbedBuilder) {
   if (!perMap || perMap.size === 0) {
     return [new EmbedBuilder()
@@ -111,42 +113,35 @@ function buildBreakdownEmbeds(perMap, mapOrder, EmbedBuilder) {
       .setDescription('No per-map item data to break down this week.')];
   }
 
-  // Order maps the same way as the main digest (by round count), falling
-  // back to whatever order perMap has for any maps not in mapOrder.
   const ordered = [...mapOrder.filter(m => perMap.has(m))];
   for (const m of perMap.keys()) {
     if (!ordered.includes(m)) ordered.push(m);
   }
 
-  const embed = new EmbedBuilder()
-    .setColor(0x2b2d31)
-    .setTitle('🔍 Per-Map Breakdown — Past Week')
-    .setFooter({ text: 'PrimalGame · non-pro servers · most/least used per category' })
-    .setTimestamp();
+  const fmt = (mAndL) => {
+    if (!mAndL.most) return 'no data';
+    const mostStr = `**${mAndL.most[0]}** (${mAndL.most[1]})`;
+    if (mAndL.most[0] === mAndL.least[0]) return mostStr;
+    return `${mostStr}\n*least: ${mAndL.least[0]} (${mAndL.least[1]})*`;
+  };
 
-  for (const map of ordered) {
+  return ordered.map((map, i) => {
     const counts = perMap.get(map);
     const dino = mostAndLeast(counts.dino);
     const weapon = mostAndLeast(counts.weapon);
     const vehicle = mostAndLeast(counts.vehicle);
     const pickup = mostAndLeast(counts.pickup);
 
-    const fmt = (label, mAndL) => {
-      if (!mAndL.most) return `${label}: no data`;
-      const mostStr = `${mAndL.most[0]} (${mAndL.most[1]})`;
-      if (mAndL.most[0] === mAndL.least[0]) return `${label}: ${mostStr} only`;
-      const leastStr = `${mAndL.least[0]} (${mAndL.least[1]})`;
-      return `${label}: most ${mostStr} · least ${leastStr}`;
-    };
-
-    embed.addFields({
-      name: map,
-      value: [fmt('Dino', dino), fmt('Vehicle', vehicle), fmt('Weapon', weapon), fmt('Pickup', pickup)].join('\n'),
-      inline: false,
-    });
-  }
-
-  return [embed];
+    return new EmbedBuilder()
+      .setColor(MAP_COLORS[i % MAP_COLORS.length])
+      .setTitle(map)
+      .addFields(
+        { name: '🦖 Dino', value: fmt(dino), inline: true },
+        { name: '🚗 Vehicle', value: fmt(vehicle), inline: true },
+        { name: '🔫 Weapon', value: fmt(weapon), inline: true },
+        { name: '📦 Pickup', value: fmt(pickup), inline: true },
+      );
+  });
 }
 
 function writeDigest(current, prior) {
@@ -246,7 +241,16 @@ module.exports = function setup(client, { supabase }) {
     const perMap = await getPerMapItemBreakdown(supabase);
     const mapOrder = current.ranked.map(([map]) => map);
     const breakdownEmbeds = buildBreakdownEmbeds(perMap, mapOrder, EmbedBuilder);
-    await channel.send({ embeds: breakdownEmbeds }).catch(err => console.error('[map-history-digest] Failed to post breakdown:', err.message));
+
+    // Discord allows up to 10 embeds per message - chunk just in case there
+    // are ever more maps than that.
+    for (let i = 0; i < breakdownEmbeds.length; i += 10) {
+      const chunk = breakdownEmbeds.slice(i, i + 10);
+      const payload = i === 0
+        ? { content: '**Per-map breakdown** — most/least used per category, past week, non-pro servers', embeds: chunk }
+        : { embeds: chunk };
+      await channel.send(payload).catch(err => console.error('[map-history-digest] Failed to post breakdown:', err.message));
+    }
 
     await supabase
       .from('scheduled_posts')

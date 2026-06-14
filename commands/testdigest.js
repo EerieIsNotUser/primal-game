@@ -85,7 +85,14 @@ module.exports = {
     const breakdownEmbeds = buildBreakdownEmbeds(perMap, mapOrder, EmbedBuilder);
 
     await interaction.channel.send(`*(test data)*\n${text}`).catch(() => {});
-    await interaction.channel.send({ embeds: breakdownEmbeds }).catch(() => {});
+
+    for (let i = 0; i < breakdownEmbeds.length; i += 10) {
+      const chunk = breakdownEmbeds.slice(i, i + 10);
+      const payload = i === 0
+        ? { content: '**Per-map breakdown** — most/least used per category, past week, non-pro servers', embeds: chunk }
+        : { embeds: chunk };
+      await interaction.channel.send(payload).catch(() => {});
+    }
 
     return interaction.editReply('Posted a test digest with generated data above.');
   },
