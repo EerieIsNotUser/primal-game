@@ -49,7 +49,7 @@ async function buildLineChartUrl(labels, series, title) {
       label: s.label,
       data: s.data,
       fill: true,
-      backgroundColor: verticalGradient(color, series.length > 1 ? 0.35 : 0.55, 0.0).backgroundColor,
+      backgroundColor: hexToRgba(color, fillAlpha),
       borderColor: color,
       borderWidth: 3.5,
       tension: 0.35,
