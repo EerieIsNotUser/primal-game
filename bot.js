@@ -6,7 +6,9 @@ const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
 
 // - Supabase ─────────────────────────────────────────────────────────────────
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
+  : null;
 
 // - Discord client ─────────────────────────────────────────────────────────────────
 // Guilds are enough for SC .. do not enable other intents until specified 
