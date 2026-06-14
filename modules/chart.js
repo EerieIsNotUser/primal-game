@@ -52,7 +52,7 @@ async function buildLineChartUrl(labels, series, title) {
       backgroundColor: hexToRgba(color, fillAlpha),
       borderColor: color,
       borderWidth: 3.5,
-      tension: 0.35,
+      tension: series.length > 1 ? 0.35 : 0.25,
       pointRadius: 0,
       pointHoverRadius: 4,
     };
@@ -89,7 +89,11 @@ async function buildLineChartUrl(labels, series, title) {
 
   const body = {
     chart: config,
-    backgroundColor: '#2b2d31',
+    backgroundColor: {
+      gradient: 'linear',
+      direction: 'vertical',
+      colors: ['#26272b', '#2f3035'],
+    },
     width: 1200,
     height: 600,
     devicePixelRatio: 2,
