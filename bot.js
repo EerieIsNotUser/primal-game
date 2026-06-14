@@ -5,34 +5,31 @@ const express = require('express');
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
 
-// - Supabase ─────────────────────────────────────────────────────────────────
-const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
-  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
-  : null;
+// ── Supabase ─────────────────────────────────────────────────────────────────
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
-// - Discord client ─────────────────────────────────────────────────────────────────
-// Guilds are enough for SC .. do not enable other intents until specified 
-// it doesn't actually need, however PG will remain out of main server until review is
-// processed. mostly to avoid rate limit restrictions
+// ── Discord client ──────────────────────────────────────────────────────────
+// Guilds is enough for slash commands. Add more intents only when a feature
+// actually needs them (e.g. GuildMembers for member-lookup commands) - fewer
+// intents means PrimalGame stays out of Discord's privileged intent review.
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds],
+  intents: [GatewayIntentBits.Guilds],
 });
 
-client.commands = new Collection ();
+client.commands = new Collection();
 const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'));
 for (const file of commandFiles) {
-    const filePath = path.join(commandsPath, file);
-    const command = require(filePath);
-    if ('data' in command && 'execute' in command) {
-        client.commands.set(command.data.name, command);
-    }
+  const command = require(path.join(commandsPath, file));
+  if (command.data && command.execute) {
+    client.commands.set(command.data.name, command);
   }
+}
 
 client.once('ready', () => {
   console.log(`PrimalGame logged in as ${client.user.tag}`);
 });
- 
+
 client.on('interactionCreate', async interaction => {
   if (interaction.isAutocomplete()) {
     const command = client.commands.get(interaction.commandName);
@@ -44,12 +41,12 @@ client.on('interactionCreate', async interaction => {
     }
     return;
   }
- 
+
   if (!interaction.isChatInputCommand()) return;
- 
+
   const command = client.commands.get(interaction.commandName);
   if (!command) return;
- 
+
   try {
     await command.execute(interaction, { supabase });
   } catch (err) {
@@ -63,7 +60,7 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN?.trim());
 
 // ── Ingestion API ────────────────────────────────────────────────────────────
 // Roblox (via KKG's script) will POST round-complete payloads here once the
@@ -73,27 +70,25 @@ const app = express();
 app.use(express.json());
 
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', service: 'primalgame' });
+  res.json({ status: 'ok', service: 'primalgame' });
 });
 
 // Shared-secret check for any future /api/* ingestion routes.
-// maintain this pathfind - DELETING WILL BE UNRECOVERABLE.
 function requireIngestKey(req, res, next) {
-    const key = req.headers['x-api-key'];
-    if (!key || key !== process.env.INGEST_API_KEY) {
-        return res.status(401).json({ error: 'unauthorized' });
-    }
-    next();
+  const key = req.headers['x-api-key'];
+  if (!key || key !== process.env.INGEST_API_KEY) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  next();
 }
 
-
 app.post('/api/round-complete', requireIngestKey, async (req, res) => {
-  // Placeholder
+  // Placeholder until the payload schema is finalized with KKG.
   console.log('Received round-complete payload:', req.body);
   res.json({ received: true });
-});  
+});
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`Ingestion API listening on port ${port}`);
+  console.log(`PrimalGame ingestion API listening on port ${port}`);
 });
