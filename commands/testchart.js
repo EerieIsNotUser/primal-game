@@ -30,6 +30,7 @@ module.exports = {
     await interaction.deferReply({ ephemeral: true });
 
     const mode = interaction.options.getString('mode') || 'both';
+    console.log('[testchart] mode:', mode);
     const days = 14;
     const labels = [];
     const now = new Date();
@@ -39,10 +40,12 @@ module.exports = {
     }
 
     const embeds = [];
+    console.log('[testchart] mode:', mode);
 
     if (mode === 'single' || mode === 'both') {
       const data = generateSeries(days, 45, 25, 0, 10);
       const url = buildLineChartUrl(labels, [{ label: 'Jungle', data }], 'Jungle — Rounds Played (Past 14 Days)');
+      console.log('[testchart] single URL:', url);
       embeds.push(new EmbedBuilder().setColor(0x5865F2).setImage(url));
     }
 
@@ -57,7 +60,9 @@ module.exports = {
       embeds.push(new EmbedBuilder().setColor(0x5865F2).setImage(url));
     }
 
-    await interaction.channel.send({ content: '*(test data)*', embeds }).catch(() => {});
+    await interaction.channel.send({ content: '*(test data)*', embeds }).catch(err => {
+      console.error('[testchart] send failed:', err.message);
+    });
 
     return interaction.editReply('Posted test chart(s) above.');
   },
