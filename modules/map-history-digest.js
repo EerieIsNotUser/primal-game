@@ -280,3 +280,8 @@ module.exports = function setup(client, { supabase }) {
 
   scheduleNext();
 };
+
+// Expose formatting functions so a test command can generate output using
+// the exact same logic, with synthetic data instead of a live query.
+module.exports.writeDigest = writeDigest;
+module.exports.buildBreakdownEmbeds = buildBreakdownEmbeds;
