@@ -4,6 +4,7 @@
 // Schedule persists across restarts via the scheduled_posts table.
 
 const { EmbedBuilder } = require('discord.js');
+const { buildLineChartUrl, bucketRoundsByMap } = require('./chart');
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const POST_ID = 'map-history-weekly';
@@ -60,88 +61,83 @@ async function getPriorWeekMapCounts(supabase) {
   return counts;
 }
 
-// Per-map most/least used dino, vehicle, weapon for the past week, non-pro servers.
-async function getPerMapItemBreakdown(supabase) {
+// Overall most-used items across all maps for the past week, non-pro servers.
+// Returns { dino: Map, weapon: Map, vehicle: Map, pickup: Map } - counts
+// aggregated across every map, not broken down per-map.
+async function getOverallItemCounts(supabase) {
   const cutoff = new Date(Date.now() - WEEK_MS);
 
   const { data, error } = await supabase
     .from('round_players')
-    .select('dino, weapon, vehicle, pickups, round_logs!inner(map, played_at, server_type)')
+    .select('dino, weapon, vehicle, pickups, round_logs!inner(played_at, server_type)')
     .gte('round_logs.played_at', cutoff.toISOString())
     .neq('round_logs.server_type', 'pro');
 
   if (error || !data) return null;
 
-  // mapName -> { dino: Map, weapon: Map, vehicle: Map, pickup: Map }
-  const perMap = new Map();
+  const overall = { dino: new Map(), weapon: new Map(), vehicle: new Map(), pickup: new Map() };
   for (const row of data) {
-    const map = row.round_logs?.map;
-    if (!map) continue;
-    if (!perMap.has(map)) {
-      perMap.set(map, { dino: new Map(), weapon: new Map(), vehicle: new Map(), pickup: new Map() });
-    }
-    const entry = perMap.get(map);
     for (const [field, val] of [['dino', row.dino], ['weapon', row.weapon], ['vehicle', row.vehicle]]) {
       if (!val) continue;
-      entry[field].set(val, (entry[field].get(val) || 0) + 1);
+      overall[field].set(val, (overall[field].get(val) || 0) + 1);
     }
-    // pickups is an array - each item counted individually.
     if (Array.isArray(row.pickups)) {
       for (const item of row.pickups) {
         if (!item) continue;
-        entry.pickup.set(item, (entry.pickup.get(item) || 0) + 1);
+        overall.pickup.set(item, (overall.pickup.get(item) || 0) + 1);
       }
     }
   }
 
-  return perMap;
+  return overall;
 }
 
-function mostAndLeast(countMap) {
-  if (countMap.size === 0) return { most: null, least: null };
-  const sorted = [...countMap.entries()].sort((a, b) => b[1] - a[1]);
-  return { most: sorted[0], least: sorted[sorted.length - 1] };
+const BAR_LENGTH = 14; // characters wide
+
+function topN(countMap, n = 3) {
+  return [...countMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
 }
 
-const MAP_COLORS = [0x57F287, 0x5865F2, 0xFEE75C, 0xEB459E, 0xED4245, 0x9B59B6];
+function makeBar(value, max) {
+  const filled = max > 0 ? Math.round((value / max) * BAR_LENGTH) : 0;
+  return '█'.repeat(Math.max(0, filled)) + '░'.repeat(BAR_LENGTH - Math.max(0, filled));
+}
 
-function buildBreakdownEmbeds(perMap, mapOrder, EmbedBuilder) {
-  if (!perMap || perMap.size === 0) {
-    return [new EmbedBuilder()
-      .setColor(0x2b2d31)
-      .setTitle('🔍 Per-Map Breakdown — Past Week')
-      .setDescription('No per-map item data to break down this week.')];
+const CATEGORY_META = [
+  { key: 'dino', emoji: '🦖', label: 'Dinos' },
+  { key: 'vehicle', emoji: '🚗', label: 'Vehicles' },
+  { key: 'weapon', emoji: '🔫', label: 'Weapons' },
+  { key: 'pickup', emoji: '📦', label: 'Pickups' },
+];
+
+// Build a single embed with a top-3 bar chart per category, across all maps.
+function buildOverallBarsEmbed(overall, EmbedBuilder) {
+  const embed = new EmbedBuilder()
+    .setColor(0x5865F2)
+    .setTitle('📈 This Week Across Primal Pursuit')
+    .setFooter({ text: 'PrimalGame · non-pro servers · top 3 per category' })
+    .setTimestamp();
+
+  let hasAnyData = false;
+
+  for (const { key, emoji, label } of CATEGORY_META) {
+    const counts = overall[key];
+    const top = topN(counts, 3);
+    if (top.length === 0) {
+      embed.addFields({ name: `${emoji} ${label}`, value: 'No data this week.', inline: false });
+      continue;
+    }
+    hasAnyData = true;
+    const max = top[0][1];
+    const lines = top.map(([name, count]) => `\`${makeBar(count, max)}\` ${name} (${count.toLocaleString('en-US')})`);
+    embed.addFields({ name: `${emoji} ${label}`, value: lines.join('\n'), inline: false });
   }
 
-  const ordered = [...mapOrder.filter(m => perMap.has(m))];
-  for (const m of perMap.keys()) {
-    if (!ordered.includes(m)) ordered.push(m);
+  if (!hasAnyData) {
+    embed.setDescription('No item data logged this week.');
   }
 
-  const fmt = (mAndL) => {
-    if (!mAndL.most) return 'no data';
-    const mostStr = `**${mAndL.most[0]}** (${mAndL.most[1]})`;
-    if (mAndL.most[0] === mAndL.least[0]) return mostStr;
-    return `${mostStr}\n*least: ${mAndL.least[0]} (${mAndL.least[1]})*`;
-  };
-
-  return ordered.map((map, i) => {
-    const counts = perMap.get(map);
-    const dino = mostAndLeast(counts.dino);
-    const weapon = mostAndLeast(counts.weapon);
-    const vehicle = mostAndLeast(counts.vehicle);
-    const pickup = mostAndLeast(counts.pickup);
-
-    return new EmbedBuilder()
-      .setColor(MAP_COLORS[i % MAP_COLORS.length])
-      .setTitle(map)
-      .addFields(
-        { name: '🦖 Dino', value: fmt(dino), inline: true },
-        { name: '🚗 Vehicle', value: fmt(vehicle), inline: true },
-        { name: '🔫 Weapon', value: fmt(weapon), inline: true },
-        { name: '📦 Pickup', value: fmt(pickup), inline: true },
-      );
-  });
+  return embed;
 }
 
 function writeDigest(current, prior) {
@@ -238,18 +234,24 @@ module.exports = function setup(client, { supabase }) {
 
     await channel.send(text).catch(err => console.error('[map-history-digest] Failed to post:', err.message));
 
-    const perMap = await getPerMapItemBreakdown(supabase);
-    const mapOrder = current.ranked.map(([map]) => map);
-    const breakdownEmbeds = buildBreakdownEmbeds(perMap, mapOrder, EmbedBuilder);
+    const overall = await getOverallItemCounts(supabase);
+    const barsEmbed = buildOverallBarsEmbed(overall || { dino: new Map(), weapon: new Map(), vehicle: new Map(), pickup: new Map() }, EmbedBuilder);
+    await channel.send({ embeds: [barsEmbed] }).catch(err => console.error('[map-history-digest] Failed to post bars:', err.message));
 
-    // Discord allows up to 10 embeds per message - chunk just in case there
-    // are ever more maps than that.
-    for (let i = 0; i < breakdownEmbeds.length; i += 10) {
-      const chunk = breakdownEmbeds.slice(i, i + 10);
-      const payload = i === 0
-        ? { content: '**Per-map breakdown** — most/least used per category, past week, non-pro servers', embeds: chunk }
-        : { embeds: chunk };
-      await channel.send(payload).catch(err => console.error('[map-history-digest] Failed to post breakdown:', err.message));
+    // Overlaid per-map chart for the past week.
+    const { data: weekRows } = await supabase
+      .from('round_logs')
+      .select('map, played_at')
+      .gte('played_at', new Date(Date.now() - WEEK_MS).toISOString())
+      .neq('server_type', 'pro');
+
+    if (weekRows && weekRows.length > 0) {
+      const { labels, series } = bucketRoundsByMap(weekRows, new Date(Date.now() - WEEK_MS), new Date());
+      if (series.length > 0) {
+        const chartUrl = buildLineChartUrl(labels, series, 'Map Popularity — Past Week');
+        const chartEmbed = new EmbedBuilder().setColor(0x5865F2).setImage(chartUrl);
+        await channel.send({ embeds: [chartEmbed] }).catch(err => console.error('[map-history-digest] Failed to post chart:', err.message));
+      }
     }
 
     await supabase
@@ -288,4 +290,4 @@ module.exports = function setup(client, { supabase }) {
 // Expose formatting functions so a test command can generate output using
 // the exact same logic, with synthetic data instead of a live query.
 module.exports.writeDigest = writeDigest;
-module.exports.buildBreakdownEmbeds = buildBreakdownEmbeds;
+module.exports.buildOverallBarsEmbed = buildOverallBarsEmbed;
