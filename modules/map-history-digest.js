@@ -248,7 +248,7 @@ module.exports = function setup(client, { supabase }) {
     if (weekRows && weekRows.length > 0) {
       const { labels, series } = bucketRoundsByMap(weekRows, new Date(Date.now() - WEEK_MS), new Date());
       if (series.length > 0) {
-        const chartUrl = buildLineChartUrl(labels, series, 'Map Popularity — Past Week');
+        const chartUrl = await buildLineChartUrl(labels, series, 'Map Popularity — Past Week');
         const chartEmbed = new EmbedBuilder().setColor(0x5865F2).setImage(chartUrl);
         await channel.send({ embeds: [chartEmbed] }).catch(err => console.error('[map-history-digest] Failed to post chart:', err.message));
       }

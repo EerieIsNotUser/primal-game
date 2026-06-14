@@ -3,6 +3,7 @@
 // time, styled to match Statbot's dark/smooth/gradient-fill look.
 
 const QUICKCHART_URL = 'https://quickchart.io/chart';
+const QUICKCHART_CREATE_URL = 'https://quickchart.io/chart/create';
 
 // A small palette for overlaying multiple maps on one chart.
 const PALETTE = ['#5865F2', '#57F287', '#FEE75C', '#EB459E', '#ED4245', '#9B59B6'];
@@ -15,13 +16,19 @@ function hexToRgba(hex, alpha) {
 }
 
 /**
- * Build a QuickChart URL for one or more time-series lines.
+ * Build a chart image URL for one or more time-series lines, styled to match
+ * Statbot's dark/smooth/gradient-fill look.
+ *
+ * Uses QuickChart's /chart/create endpoint to get a short URL, since long
+ * configs (multiple series, many data points) can exceed Discord's 2048-char
+ * embed image URL limit if passed directly as a query string.
  *
  * @param labels  array of x-axis labels (e.g. dates)
  * @param series  array of { label, data, color? } - color defaults from palette
  * @param title   chart title (top-left, like Statbot)
+ * @returns Promise<string> - image URL
  */
-function buildLineChartUrl(labels, series, title) {
+async function buildLineChartUrl(labels, series, title) {
   const datasets = series.map((s, i) => {
     const color = s.color || PALETTE[i % PALETTE.length];
     // Lower alpha when there are multiple series, to avoid muddy overlap.
@@ -68,6 +75,31 @@ function buildLineChartUrl(labels, series, title) {
     },
   };
 
+  const body = {
+    chart: config,
+    backgroundColor: '#2b2d31',
+    width: 800,
+    height: 400,
+    devicePixelRatio: 2,
+  };
+
+  try {
+    const res = await fetch(QUICKCHART_CREATE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (json?.success && json?.url) {
+      return json.url;
+    }
+    console.error('[chart] QuickChart create failed, falling back to long URL:', JSON.stringify(json));
+  } catch (err) {
+    console.error('[chart] QuickChart create request failed, falling back to long URL:', err.message);
+  }
+
+  // Fallback: long URL (may exceed Discord's limit for large configs, but
+  // works for small/single-series charts if the create endpoint is down).
   const params = new URLSearchParams({
     c: JSON.stringify(config),
     backgroundColor: '#2b2d31',
@@ -75,7 +107,6 @@ function buildLineChartUrl(labels, series, title) {
     height: '400',
     devicePixelRatio: '2',
   });
-
   return `${QUICKCHART_URL}?${params.toString()}`;
 }
 

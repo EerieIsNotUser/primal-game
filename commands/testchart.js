@@ -30,7 +30,6 @@ module.exports = {
     await interaction.deferReply({ ephemeral: true });
 
     const mode = interaction.options.getString('mode') || 'both';
-    console.log('[testchart] mode:', mode);
     const days = 14;
     const labels = [];
     const now = new Date();
@@ -40,11 +39,10 @@ module.exports = {
     }
 
     const embeds = [];
-    console.log('[testchart] mode:', mode);
 
     if (mode === 'single' || mode === 'both') {
       const data = generateSeries(days, 45, 25, 0, 10);
-      const url = buildLineChartUrl(labels, [{ label: 'Jungle', data }], 'Jungle — Rounds Played (Past 14 Days)');
+      const url = await buildLineChartUrl(labels, [{ label: 'Jungle', data }], 'Jungle — Rounds Played (Past 14 Days)');
       console.log('[testchart] single URL:', url);
       embeds.push(new EmbedBuilder().setColor(0x5865F2).setImage(url));
     }
@@ -56,7 +54,8 @@ module.exports = {
         { label: 'Cavern', data: generateSeries(days, 20, 10, 2.0, 6) },
         { label: 'Primal Park', data: generateSeries(days, 12, 8, 0.6, 5) },
       ];
-      const url = buildLineChartUrl(labels, series, 'Map Popularity — Past 14 Days');
+      const url = await buildLineChartUrl(labels, series, 'Map Popularity — Past 14 Days');
+      console.log('[testchart] overlay URL:', url);
       embeds.push(new EmbedBuilder().setColor(0x5865F2).setImage(url));
     }
 

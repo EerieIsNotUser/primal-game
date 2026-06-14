@@ -130,7 +130,7 @@ module.exports = {
       ? `${map} — Rounds Played (${timeframeLabel})`
       : `Map Popularity — ${timeframeLabel}`;
 
-    const chartUrl = buildLineChartUrl(labels, series, title);
+    const chartUrl = await buildLineChartUrl(labels, series, title);
 
     const embed = new EmbedBuilder()
       .setColor(0x5865F2)
