@@ -15,6 +15,18 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+// QuickChart supports gradient fills via this special object syntax,
+// which it converts into a real CanvasGradient server-side.
+function verticalGradient(hex, topAlpha, bottomAlpha) {
+  return {
+    backgroundColor: {
+      gradient: 'linear',
+      direction: 'vertical',
+      colors: [hexToRgba(hex, topAlpha), hexToRgba(hex, bottomAlpha)],
+    },
+  };
+}
+
 /**
  * Build a chart image URL for one or more time-series lines, styled to match
  * Statbot's dark/smooth/gradient-fill look.
@@ -37,7 +49,7 @@ async function buildLineChartUrl(labels, series, title) {
       label: s.label,
       data: s.data,
       fill: true,
-      backgroundColor: hexToRgba(color, fillAlpha),
+      backgroundColor: verticalGradient(color, series.length > 1 ? 0.35 : 0.55, 0.0).backgroundColor,
       borderColor: color,
       borderWidth: 3.5,
       tension: 0.35,
@@ -64,12 +76,12 @@ async function buildLineChartUrl(labels, series, title) {
       scales: {
         x: {
           ticks: { color: '#dcddde', font: { size: 13 } },
-          grid: { color: 'rgba(255,255,255,0.07)' },
+          grid: { display: false },
         },
         y: {
           beginAtZero: true,
           ticks: { color: '#dcddde', precision: 0, font: { size: 13 } },
-          grid: { color: 'rgba(255,255,255,0.07)' },
+          grid: { color: 'rgba(255,255,255,0.06)', drawTicks: false },
         },
       },
     },
