@@ -22,8 +22,7 @@ async function getWeeklyMapCounts(supabase) {
   const { data, error } = await supabase
     .from('round_logs')
     .select('map')
-    .gte('played_at', cutoff.toISOString())
-    .neq('server_type', 'pro');
+    .gte('played_at', cutoff.toISOString());
 
   if (error || !data) return null;
 
@@ -48,8 +47,7 @@ async function getPriorWeekMapCounts(supabase) {
     .from('round_logs')
     .select('map')
     .gte('played_at', start.toISOString())
-    .lt('played_at', end.toISOString())
-    .neq('server_type', 'pro');
+    .lt('played_at', end.toISOString());
 
   if (error || !data) return null;
 
@@ -71,7 +69,7 @@ async function getOverallItemCounts(supabase) {
     .from('round_players')
     .select('dino, weapon, vehicle, pickups, round_logs!inner(played_at, server_type)')
     .gte('round_logs.played_at', cutoff.toISOString())
-    .neq('round_logs.server_type', 'pro');
+    ;
 
   if (error || !data) return null;
 
@@ -115,7 +113,7 @@ function buildOverallBarsEmbed(overall, EmbedBuilder) {
   const embed = new EmbedBuilder()
     .setColor(0x5865F2)
     .setTitle('📈 This Week Across Primal Pursuit')
-    .setFooter({ text: 'PrimalGame · non-pro servers · top 3 per category' })
+    .setFooter({ text: 'PrimalGame · all servers · top 3 per category' })
     .setTimestamp();
 
   let hasAnyData = false;
