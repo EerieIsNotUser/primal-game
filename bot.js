@@ -19,12 +19,36 @@ const client = new Client({
 client.commands = new Collection();
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'));
+const commandDataForRegistration = [];
+
 for (const file of commandFiles) {
   const command = require(path.join(commandsPath, file));
   if (command.data && command.execute) {
     client.commands.set(command.data.name, command);
+    commandDataForRegistration.push(command.data.toJSON());
   }
 }
+
+// ── Register slash commands with Discord ─────────────────────────────────
+// Runs on every boot. Guild-scoped (instant updates) if DISCORD_GUILD_ID is
+// set, otherwise global (takes up to an hour to propagate).
+const { REST, Routes } = require('discord.js');
+const rest = new REST().setToken(process.env.DISCORD_TOKEN?.trim());
+
+async function registerCommands() {
+  try {
+    const route = process.env.DISCORD_GUILD_ID
+      ? Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.DISCORD_GUILD_ID)
+      : Routes.applicationCommands(process.env.DISCORD_CLIENT_ID);
+
+    const data = await rest.put(route, { body: commandDataForRegistration });
+    console.log(`Registered ${data.length} slash command(s)${process.env.DISCORD_GUILD_ID ? ' (guild-scoped)' : ' (global)'}.`);
+  } catch (err) {
+    console.error('Failed to register slash commands:', err);
+  }
+}
+
+registerCommands();
 
 client.once('ready', () => {
   console.log(`PrimalGame logged in as ${client.user.tag}`);
