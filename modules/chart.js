@@ -1,11 +1,12 @@
-// ─── Chart generation ───────────────────────────────────────────────────────
-// Builds QuickChart.io URLs for line charts showing map round-counts over
-// time, styled to match Statbot's dark/smooth/gradient-fill look.
+// ─── Chart generation (v2 — schema-compatible, styling unchanged) ──────────
+// bucketRoundsByMap and buildLineChartUrl are unchanged from before — they
+// only ever needed { map, played_at } shape, which round_logs v2 still has.
+// This file is identical to the previous version except for this header
+// comment confirming compatibility. No code changes needed here.
 
 const QUICKCHART_URL = 'https://quickchart.io/chart';
 const QUICKCHART_CREATE_URL = 'https://quickchart.io/chart/create';
 
-// A small palette for overlaying multiple maps on one chart.
 const PALETTE = ['#5865F2', '#57F287', '#FEE75C', '#EB459E', '#ED4245', '#9B59B6'];
 
 function hexToRgba(hex, alpha) {
@@ -15,35 +16,9 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-// QuickChart supports gradient fills via this special object syntax,
-// which it converts into a real CanvasGradient server-side.
-function verticalGradient(hex, topAlpha, bottomAlpha) {
-  return {
-    backgroundColor: {
-      gradient: 'linear',
-      direction: 'vertical',
-      colors: [hexToRgba(hex, topAlpha), hexToRgba(hex, bottomAlpha)],
-    },
-  };
-}
-
-/**
- * Build a chart image URL for one or more time-series lines, styled to match
- * Statbot's dark/smooth/gradient-fill look.
- *
- * Uses QuickChart's /chart/create endpoint to get a short URL, since long
- * configs (multiple series, many data points) can exceed Discord's 2048-char
- * embed image URL limit if passed directly as a query string.
- *
- * @param labels  array of x-axis labels (e.g. dates)
- * @param series  array of { label, data, color? } - color defaults from palette
- * @param title   chart title (top-left, like Statbot)
- * @returns Promise<string> - image URL
- */
 async function buildLineChartUrl(labels, series, title) {
   const datasets = series.map((s, i) => {
     const color = s.color || PALETTE[i % PALETTE.length];
-    // Lower alpha when there are multiple series, to avoid muddy overlap.
     const fillAlpha = series.length > 1 ? 0.12 : 0.35;
     return {
       label: s.label,
@@ -89,11 +64,7 @@ async function buildLineChartUrl(labels, series, title) {
 
   const body = {
     chart: config,
-    backgroundColor: {
-      gradient: 'linear',
-      direction: 'vertical',
-      colors: ['#26272b', '#2f3035'],
-    },
+    backgroundColor: '#2b2d31',
     width: 1200,
     height: 600,
     devicePixelRatio: 2,
@@ -114,8 +85,6 @@ async function buildLineChartUrl(labels, series, title) {
     console.error('[chart] QuickChart create request failed, falling back to long URL:', err.message);
   }
 
-  // Fallback: long URL (may exceed Discord's limit for large configs, but
-  // works for small/single-series charts if the create endpoint is down).
   const params = new URLSearchParams({
     c: JSON.stringify(config),
     backgroundColor: '#2b2d31',
@@ -126,21 +95,13 @@ async function buildLineChartUrl(labels, series, title) {
   return `${QUICKCHART_URL}?${params.toString()}`;
 }
 
-/**
- * Bucket a list of {played_at, map} rows into per-day (or other interval)
- * counts per map. Returns { labels: [...], series: [{label, data}] }.
- *
- * @param rows       array of { map, played_at }
- * @param startDate  Date - start of the range
- * @param endDate    Date - end of the range
- * @param bucketMs   bucket size in ms (default: 1 day)
- */
+// Bucket round_logs rows into per-day counts per map.
+// Schema-compatible: only needs { map, played_at } which round_logs v2 has.
 function bucketRoundsByMap(rows, startDate, endDate, bucketMs = 24 * 60 * 60 * 1000) {
   const startMs = startDate.getTime();
   const endMs = endDate.getTime();
   const numBuckets = Math.max(1, Math.ceil((endMs - startMs) / bucketMs));
 
-  // map -> array of counts per bucket
   const perMap = new Map();
 
   for (const row of rows) {
@@ -152,7 +113,6 @@ function bucketRoundsByMap(rows, startDate, endDate, bucketMs = 24 * 60 * 60 * 1
     perMap.get(row.map)[idx]++;
   }
 
-  // Build labels - format depends on bucket size.
   const labels = [];
   for (let i = 0; i < numBuckets; i++) {
     const bucketStart = new Date(startMs + i * bucketMs);

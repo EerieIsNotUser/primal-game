@@ -28,6 +28,10 @@ for (const file of commandFiles) {
 
 client.once('ready', () => {
   console.log(`PrimalGame logged in as ${client.user.tag}`);
+
+  require('./modules/map-history-digest')(client, { supabase });
+  require('./modules/anomaly-alerts')(client, { supabase });
+  require('./modules/balance-report')(client, { supabase });
 });
 
 client.on('interactionCreate', async interaction => {
@@ -83,8 +87,49 @@ function requireIngestKey(req, res, next) {
 }
 
 app.post('/api/round-complete', requireIngestKey, async (req, res) => {
-  // Placeholder until the payload schema is finalized with KKG.
-  console.log('Received round-complete payload:', req.body);
+  const {
+    Round_Result, Round_AverageLevel, Round_NumberOfPlayers, Round_Game_Mode,
+    Round_Map, Round_AtmosphereType, Round_DinoPlayerAverageLevel,
+    Round_NumPlayers_WithMedkits, Round_NumPlayers_WithToolkits, Round_NumPlayers_WithFuelcans,
+    Round_NumPlayers_WithDinoTrackers, Round_NumPlayers_WithMines, Round_NumPlayers_WithGamepassWeapons,
+    Round_DinosaursUsed, Round_VehiclesUsed, Round_WeaponsUsed,
+    Round_MVP_EquippedVehicle, Round_MVP_EquippedWeapon, Round_MVP_Damage,
+  } = req.body;
+
+  if (!Round_Map || !Round_Result) {
+    console.error('[round-complete] Missing required fields:', { Round_Map, Round_Result });
+    return res.status(400).json({ error: 'Missing required fields: Round_Map and Round_Result' });
+  }
+
+  const { error } = await supabase.from('round_logs').insert({
+    played_at: new Date().toISOString(),
+    round_result: Round_Result,
+    average_level: Round_AverageLevel ?? null,
+    number_of_players: Round_NumberOfPlayers ?? null,
+    game_mode: Round_Game_Mode ?? null,
+    map: Round_Map,
+    atmosphere_type: Round_AtmosphereType ?? null,
+    dino_player_average_level: Round_DinoPlayerAverageLevel ?? null,
+    num_players_with_medkits: Round_NumPlayers_WithMedkits ?? 0,
+    num_players_with_toolkits: Round_NumPlayers_WithToolkits ?? 0,
+    num_players_with_fuelcans: Round_NumPlayers_WithFuelcans ?? 0,
+    num_players_with_dinotrackers: Round_NumPlayers_WithDinoTrackers ?? 0,
+    num_players_with_mines: Round_NumPlayers_WithMines ?? 0,
+    num_players_with_gamepass_weapons: Round_NumPlayers_WithGamepassWeapons ?? 0,
+    dinosaurs_used: Array.isArray(Round_DinosaursUsed) ? Round_DinosaursUsed : null,
+    vehicles_used: Array.isArray(Round_VehiclesUsed) ? Round_VehiclesUsed : null,
+    weapons_used: Array.isArray(Round_WeaponsUsed) ? Round_WeaponsUsed : null,
+    mvp_equipped_vehicle: Round_MVP_EquippedVehicle ?? null,
+    mvp_equipped_weapon: Round_MVP_EquippedWeapon ?? null,
+    mvp_damage: Round_MVP_Damage ?? null,
+  });
+
+  if (error) {
+    console.error('[round-complete] Insert error:', error.message);
+    return res.status(500).json({ error: 'Failed to log round' });
+  }
+
+  console.log(`[round-complete] Logged round on ${Round_Map} (${Round_Result})`);
   res.json({ received: true });
 });
 

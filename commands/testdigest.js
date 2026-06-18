@@ -70,8 +70,12 @@ module.exports = {
     const text = writeDigest(current, prior);
     const barsEmbed = buildOverallBarsEmbed(overall, EmbedBuilder);
 
-    await interaction.channel.send(`*(test data)*\n${text}`).catch(() => {});
-    await interaction.channel.send({ embeds: [barsEmbed] }).catch(() => {});
+    await interaction.channel.send(`*(test data)*\n${text}`).catch(err => {
+      console.error('[testdigest] send failed:', err.message);
+    });
+    await interaction.channel.send({ embeds: [barsEmbed] }).catch(err => {
+      console.error('[testdigest] send failed:', err.message);
+    });
 
     return interaction.editReply('Posted a test digest with generated data above.');
   },
