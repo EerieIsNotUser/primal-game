@@ -5,6 +5,20 @@
 // Linux x64 target — no Cairo/Pango, no Dockerfile, no native compilation
 // risk. Verified end-to-end before adoption (see KKG handoff doc — past
 // canvas dependency issues on Railway were a known recurring pain point).
+//
+// FONT SETUP — REQUIRED: Railway containers ship with zero fonts installed
+// by default, which causes all SVG <text> to render as empty tofu boxes
+// (confirmed in production). Fixed by bundling DejaVu Sans (Bitstream Vera
+// license — freely redistributable) directly in the repo and pointing
+// librsvg/fontconfig at it via FONTCONFIG_PATH, set BEFORE sharp is first
+// required anywhere in the process. This must stay in sync with the actual
+// font files living in modules/fonts/ — do not remove that directory.
+
+const path = require('path');
+
+// Must be set before sharp's first require triggers libvips/fontconfig
+// initialization. Safe to set even if chart.js is required multiple times.
+process.env.FONTCONFIG_PATH = path.join(__dirname, 'fonts');
 
 const sharp = require('sharp');
 
@@ -84,7 +98,7 @@ async function buildLineChartImage(labels, series, title) {
   for (let v = 0; v <= yMax; v += gridStep) {
     const y = yFor(v);
     gridlinesSvg += `<line x1="${PADDING.left}" y1="${y.toFixed(2)}" x2="${WIDTH - PADDING.right}" y2="${y.toFixed(2)}" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`;
-    gridlinesSvg += `<text x="${PADDING.left - 10}" y="${(y + 4).toFixed(2)}" fill="#dcddde" font-size="13" font-family="Helvetica, Arial, sans-serif" text-anchor="end">${Math.round(v)}</text>`;
+    gridlinesSvg += `<text x="${PADDING.left - 10}" y="${(y + 4).toFixed(2)}" fill="#dcddde" font-size="13" font-family="DejaVu Sans" text-anchor="end">${Math.round(v)}</text>`;
   }
 
   // X-axis labels — thin out if too many to avoid overlap
@@ -93,7 +107,7 @@ async function buildLineChartImage(labels, series, title) {
   let xLabelsSvg = '';
   labels.forEach((label, i) => {
     if (i % labelStep !== 0 && i !== labels.length - 1) return;
-    xLabelsSvg += `<text x="${xFor(i).toFixed(2)}" y="${HEIGHT - 15}" fill="#dcddde" font-size="13" font-family="Helvetica, Arial, sans-serif" text-anchor="middle">${escapeXml(label)}</text>`;
+    xLabelsSvg += `<text x="${xFor(i).toFixed(2)}" y="${HEIGHT - 15}" fill="#dcddde" font-size="13" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(label)}</text>`;
   });
 
   // Build each series: gradient def, fill path, line path
@@ -133,13 +147,13 @@ async function buildLineChartImage(labels, series, title) {
       const textW = labelText.length * 7.5 + 28; // rough estimate for spacing
       legendSvg += `
         <rect x="${legendX}" y="${legendY - 10}" width="${swatchW}" height="12" rx="3" fill="none" stroke="${color}" stroke-width="2.5"/>
-        <text x="${legendX + swatchW + 8}" y="${legendY}" fill="#dcddde" font-size="14" font-family="Helvetica, Arial, sans-serif">${labelText}</text>`;
+        <text x="${legendX + swatchW + 8}" y="${legendY}" fill="#dcddde" font-size="14" font-family="DejaVu Sans">${labelText}</text>`;
       legendX += swatchW + 8 + textW;
     });
   }
 
   const titleSvg = title
-    ? `<text x="30" y="32" fill="#e8e9eb" font-size="18" font-weight="bold" font-family="Helvetica, Arial, sans-serif">${escapeXml(title)}</text>`
+    ? `<text x="30" y="32" fill="#e8e9eb" font-size="18" font-weight="bold" font-family="DejaVu Sans">${escapeXml(title)}</text>`
     : '';
 
   const svg = `
