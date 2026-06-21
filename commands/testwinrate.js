@@ -221,6 +221,8 @@ module.exports = {
     let breakdown;
     if (category === 'dino') {
       const dinoWins = matching.filter(r => r.round_result === 'DinoWin');
+      const dinoLosses = matching.filter(r => r.round_result === 'SurvivorWin');
+
       const vCounts = new Map(), wCounts = new Map(), pCounts = new Map();
       for (const r of dinoWins) {
         if (r.mvp_equipped_vehicle) vCounts.set(r.mvp_equipped_vehicle, (vCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
@@ -230,10 +232,22 @@ module.exports = {
       const topV = [...vCounts.entries()].sort((a, b) => b[1] - a[1])[0];
       const topW = [...wCounts.entries()].sort((a, b) => b[1] - a[1])[0];
       const topP = [...pCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+
+      // Same breakdown, but for rounds where this dino LOST (survivors won)
+      const lvCounts = new Map(), lwCounts = new Map();
+      for (const r of dinoLosses) {
+        if (r.mvp_equipped_vehicle) lvCounts.set(r.mvp_equipped_vehicle, (lvCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
+        if (r.mvp_equipped_weapon) lwCounts.set(r.mvp_equipped_weapon, (lwCounts.get(r.mvp_equipped_weapon) || 0) + 1);
+      }
+      const topLV = [...lvCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      const topLW = [...lwCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+
       breakdown =
         `Most common MVP car when ${item} won: ${topV ? `${topV[0]} (${topV[1]}x)` : 'No data'}\n` +
         `Most common MVP gun when ${item} won: ${topW ? `${topW[0]} (${topW[1]}x)` : 'No data'}\n` +
         `Most common pickup: ${topP ? `${topP[0]} (${topP[1]}x)` : 'No data'}\n` +
+        `Most common MVP car when ${item} lost: ${topLV ? `${topLV[0]} (${topLV[1]}x)` : 'No data'}\n` +
+        `Most common MVP gun when ${item} lost: ${topLW ? `${topLW[0]} (${topLW[1]}x)` : 'No data'}\n` +
         mapLine;
     } else {
       const itemWinRounds = matching.filter(r => r.round_result === 'DinoWin');
