@@ -216,7 +216,33 @@ module.exports = {
       if (r.map) mapCounts.set(r.map, (mapCounts.get(r.map) || 0) + 1);
     }
     const topMap = [...mapCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-    const mapLine = `Most common map: ${topMap ? `${topMap[0]} (${topMap[1]}x)` : 'No data'}`;
+
+    // Map breakdown only makes sense as win/loss for dino category — for
+    // vehicle/weapon, "won"/"lost" refers to the item's own MVP correlation,
+    // which is already covered elsewhere, so general map stays as-is there.
+    let mapLine;
+    if (category === 'dino') {
+      const wonRows = matching.filter(r => r.round_result === 'DinoWin');
+      const lostRows = matching.filter(r => r.round_result === 'SurvivorWin');
+
+      const wonMapCounts = new Map();
+      for (const r of wonRows) {
+        if (r.map) wonMapCounts.set(r.map, (wonMapCounts.get(r.map) || 0) + 1);
+      }
+      const lostMapCounts = new Map();
+      for (const r of lostRows) {
+        if (r.map) lostMapCounts.set(r.map, (lostMapCounts.get(r.map) || 0) + 1);
+      }
+      const topWonMap = [...wonMapCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      const topLostMap = [...lostMapCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+
+      mapLine =
+        `Most common map overall: ${topMap ? `${topMap[0]} (${topMap[1]}x)` : 'No data'}\n` +
+        `Most common map when ${item} won: ${topWonMap ? `${topWonMap[0]} (${topWonMap[1]}x)` : 'No data'}\n` +
+        `Most common map when ${item} lost: ${topLostMap ? `${topLostMap[0]} (${topLostMap[1]}x)` : 'No data'}`;
+    } else {
+      mapLine = `Most common map: ${topMap ? `${topMap[0]} (${topMap[1]}x)` : 'No data'}`;
+    }
 
     let breakdown;
     if (category === 'dino') {
