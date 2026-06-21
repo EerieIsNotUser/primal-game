@@ -1,22 +1,24 @@
 const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
 
 // ─── /testwinrate ────────────────────────────────────────────────────────
-// Synthetic-data version of /winrate. Unlike the real command, this
-// includes a working dino path (with a fake dino_name field) so the full
-// query/filter/output format can be verified before KKG adds real dino
-// tracking. Once that field is live, /winrate's dino branch can be wired
-// up to match this same logic.
+// Synthetic-data version of /winrate. Includes a working dino path (with a
+// fake dino_name field) and a fake mvp_pickup field, neither of which exist
+// in the real schema yet — this lets the full intended format be verified
+// before KKG adds those fields. Also includes the same 5000-row sampling
+// cap as the real command, with a much higher max round count so the
+// sampling behavior can actually be triggered and inspected.
 
 const MAPS = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
 const VEHICLES = ['ATV', 'Golf Cart', 'Jeep', 'Hypercar', 'Pickup Truck', 'Police Car', 'Pumpkin Wagon'];
 const WEAPONS = ['MP5', 'Shotgun', 'AK-47', 'Railgun', 'Deagle', 'Plasma Rifle', 'Crossbow'];
 const DINOS = ['T-Rex', 'Pachy', 'Raptor', 'Carno', 'Dilo', 'Giga', 'Spino', 'Trike', 'Exoraptor'];
 const GAME_MODES = ['regular', 'pro', 'doubletrouble'];
+const PICKUPS = ['Fuel Can', 'Repair Kit', 'Med Kit', 'Dino Tracker', 'Mine'];
+
+const MAX_ATTACHMENT_ROWS = 5000;
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-
-const PICKUPS = ['Fuel Can', 'Repair Kit', 'Med Kit', 'Dino Tracker', 'Mine'];
 
 function generateFakeRound(daysAgo) {
   const playedAt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000 - randInt(0, 23) * 60 * 60 * 1000);
@@ -25,12 +27,24 @@ function generateFakeRound(daysAgo) {
     map: pick(MAPS),
     round_result: Math.random() < 0.5 ? 'DinoWin' : 'SurvivorWin',
     game_mode: pick(GAME_MODES),
-    dino_name: pick(DINOS), // fake field — doesn't exist in real schema yet
+    dino_name: pick(DINOS),           // fake field — doesn't exist in real schema yet
     mvp_equipped_vehicle: pick(VEHICLES),
     mvp_equipped_weapon: pick(WEAPONS),
-    mvp_pickup: pick(PICKUPS), // fake field — doesn't exist in real schema yet
+    mvp_pickup: pick(PICKUPS),         // fake field — doesn't exist in real schema yet
     mvp_damage: randInt(100, 2000),
   };
+}
+
+function capAndSample(rows) {
+  if (rows.length <= MAX_ATTACHMENT_ROWS) {
+    return { rows, sampled: false, originalCount: rows.length };
+  }
+  const step = rows.length / MAX_ATTACHMENT_ROWS;
+  const sampled = [];
+  for (let i = 0; i < MAX_ATTACHMENT_ROWS; i++) {
+    sampled.push(rows[Math.floor(i * step)]);
+  }
+  return { rows: sampled, sampled: true, originalCount: rows.length };
 }
 
 function buildPastebinTable(rows, includeDino) {
@@ -42,6 +56,7 @@ function buildPastebinTable(rows, includeDino) {
     ...(includeDino ? [{ key: 'dino_name', label: 'Dino', width: 12 }] : []),
     { key: 'mvp_equipped_vehicle', label: 'MVP Vehicle', width: 14 },
     { key: 'mvp_equipped_weapon', label: 'MVP Weapon', width: 14 },
+    { key: 'mvp_pickup', label: 'MVP Pickup', width: 12 },
     { key: 'mvp_damage', label: 'MVP Dmg', width: 9 },
   ];
 
@@ -66,7 +81,7 @@ function buildPastebinTable(rows, includeDino) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('testwinrate')
-    .setDescription('Test /winrate with synthetic data, including dino (not yet real)')
+    .setDescription('Test /winrate with synthetic data, including dino + pickups (not yet real)')
     .addStringOption(opt =>
       opt.setName('category')
         .setDescription('What to check win rate for')
@@ -85,9 +100,9 @@ module.exports = {
     )
     .addIntegerOption(opt =>
       opt.setName('rounds')
-        .setDescription('Number of matching rounds to generate for this item (default 50)')
+        .setDescription('Number of matching rounds to generate (default 50, max 10000 to test sampling cap)')
         .setMinValue(1)
-        .setMaxValue(2000)
+        .setMaxValue(10000)
         .setRequired(false)
     ),
 
@@ -115,18 +130,13 @@ module.exports = {
     const requestedCount = interaction.options.getInteger('rounds') ?? 50;
 
     // Generate exactly the requested number of MATCHING rounds for this
-    // item, not a random pool filtered down. Mirrors the real /winrate
-    // behavior, where you get every round that actually matches.
+    // item — mirrors real /winrate, which returns every round that matches.
     const matching = [];
     for (let i = 0; i < requestedCount; i++) {
-      const round = generateFakeRound(randInt(0, 90));
-      if (category === 'dino') {
-        round.dino_name = item;
-      } else if (category === 'vehicle') {
-        round.mvp_equipped_vehicle = item;
-      } else {
-        round.mvp_equipped_weapon = item;
-      }
+      const round = generateFakeRound(randInt(0, 180));
+      if (category === 'dino') round.dino_name = item;
+      else if (category === 'vehicle') round.mvp_equipped_vehicle = item;
+      else round.mvp_equipped_weapon = item;
       matching.push(round);
     }
 
@@ -134,10 +144,7 @@ module.exports = {
 
     const wins = matching.filter(r => r.round_result === 'SurvivorWin').length;
     const winRate = Math.round((wins / matching.length) * 100);
-
     const categoryLabel = category === 'vehicle' ? 'Car' : category === 'weapon' ? 'Gun' : 'Dino';
-
-    let breakdown = '';
 
     const mapCounts = new Map();
     for (const r of matching) {
@@ -146,43 +153,41 @@ module.exports = {
     const topMap = [...mapCounts.entries()].sort((a, b) => b[1] - a[1])[0];
     const mapLine = `Most common map: ${topMap ? `${topMap[0]} (${topMap[1]}x)` : 'No data'}`;
 
+    let breakdown;
     if (category === 'dino') {
       const dinoWins = matching.filter(r => r.round_result === 'DinoWin');
-      const vCounts = new Map();
-      const wCounts = new Map();
+      const vCounts = new Map(), wCounts = new Map(), pCounts = new Map();
       for (const r of dinoWins) {
         if (r.mvp_equipped_vehicle) vCounts.set(r.mvp_equipped_vehicle, (vCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
         if (r.mvp_equipped_weapon) wCounts.set(r.mvp_equipped_weapon, (wCounts.get(r.mvp_equipped_weapon) || 0) + 1);
+        if (r.mvp_pickup) pCounts.set(r.mvp_pickup, (pCounts.get(r.mvp_pickup) || 0) + 1);
       }
       const topV = [...vCounts.entries()].sort((a, b) => b[1] - a[1])[0];
       const topW = [...wCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      const topP = [...pCounts.entries()].sort((a, b) => b[1] - a[1])[0];
       breakdown =
         `Most common MVP car when ${item} won: ${topV ? `${topV[0]} (${topV[1]}x)` : 'No data'}\n` +
         `Most common MVP gun when ${item} won: ${topW ? `${topW[0]} (${topW[1]}x)` : 'No data'}\n` +
+        `Most common pickup: ${topP ? `${topP[0]} (${topP[1]}x)` : 'No data'}\n` +
         mapLine;
     } else {
       const itemWinRounds = matching.filter(r => r.round_result === 'DinoWin');
-      const dCounts = new Map();
-      const coCounts = new Map(); // co-occurring weapon or vehicle
+      const dCounts = new Map(), coCounts = new Map(), pCounts = new Map();
       for (const r of itemWinRounds) {
         if (r.dino_name) dCounts.set(r.dino_name, (dCounts.get(r.dino_name) || 0) + 1);
         if (category === 'vehicle' && r.mvp_equipped_weapon) coCounts.set(r.mvp_equipped_weapon, (coCounts.get(r.mvp_equipped_weapon) || 0) + 1);
         if (category === 'weapon' && r.mvp_equipped_vehicle) coCounts.set(r.mvp_equipped_vehicle, (coCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
+        if (r.mvp_pickup) pCounts.set(r.mvp_pickup, (pCounts.get(r.mvp_pickup) || 0) + 1);
       }
       const topD = [...dCounts.entries()].sort((a, b) => b[1] - a[1])[0];
       const topCo = [...coCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      const topP = [...pCounts.entries()].sort((a, b) => b[1] - a[1])[0];
       const coLabel = category === 'vehicle' ? 'gun alongside this car' : 'car alongside this gun';
-
-      const pickupCounts = new Map();
-      for (const r of itemWinRounds) {
-        if (r.mvp_pickup) pickupCounts.set(r.mvp_pickup, (pickupCounts.get(r.mvp_pickup) || 0) + 1);
-      }
-      const topPickup = [...pickupCounts.entries()].sort((a, b) => b[1] - a[1])[0];
 
       breakdown =
         `Most common winning dino when ${item} was MVP: ${topD ? `${topD[0]} (${topD[1]}x)` : 'No data'}\n` +
         `Most common ${coLabel}: ${topCo ? `${topCo[0]} (${topCo[1]}x)` : 'No data'}\n` +
-        `Most common pickup: ${topPickup ? `${topPickup[0]} (${topPickup[1]}x)` : 'No data'}\n` +
+        `Most common pickup: ${topP ? `${topP[0]} (${topP[1]}x)` : 'No data'}\n` +
         mapLine;
     }
 
@@ -191,11 +196,16 @@ module.exports = {
       `${matching.length} round${matching.length !== 1 ? 's' : ''} generated\n\n` +
       breakdown;
 
-    const table = buildPastebinTable(matching, category === 'dino');
+    const { rows: tableRows, sampled, originalCount } = capAndSample(matching);
+    const table = buildPastebinTable(tableRows, category === 'dino');
     const buffer = Buffer.from(table, 'utf8');
     const attachment = new AttachmentBuilder(buffer, { name: `test-winrate-${item.replace(/\s+/g, '-')}-${Date.now()}.txt` });
 
-    await interaction.channel.send({ content: summary, files: [attachment] }).catch(err => {
+    const finalSummary = sampled
+      ? `${summary}\n\n📊 *Attachment shows an evenly-sampled ${tableRows.length} of ${originalCount} total matching rounds (file size cap). The ${winRate}% win rate above is calculated from all ${originalCount} rounds, not just the sample.*`
+      : summary;
+
+    await interaction.channel.send({ content: finalSummary, files: [attachment] }).catch(err => {
       console.error('[testwinrate] send failed:', err.message);
     });
 
