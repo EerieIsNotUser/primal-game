@@ -207,30 +207,28 @@ function bucketRoundsByMap(rows, startDate, endDate, bucketMs = 24 * 60 * 60 * 1
 
 /**
  * Build a dual-axis composite chart: grey bars (left axis, e.g. total
- * rounds played) in the background, a smoothed gradient line (right axis,
- * e.g. map popularity) drawn on top. Matches Statbot's Members/Messages
- * chart pattern (bars = raw volume, line = derived/smoothed metric).
+ * rounds played) in the background, one or more smoothed gradient lines
+ * (right axis, e.g. map popularity) drawn on top. Matches Statbot's
+ * Members/Messages chart pattern (bars = raw volume, lines = derived/
+ * smoothed metrics). Supports multiple lines sharing the right axis.
  *
- * @param labels    array of x-axis labels
- * @param barData   array of numbers for the background bar chart (left axis)
- * @param barLabel  legend label for the bar series
- * @param lineData  array of numbers for the foreground line (right axis)
- * @param lineLabel legend label for the line series
- * @param lineColor hex color for the line (default Discord blurple)
- * @param title     chart title
+ * @param labels     array of x-axis labels
+ * @param barData    array of numbers for the background bar chart (left axis)
+ * @param barLabel   legend label for the bar series
+ * @param lineSeries array of { label, data, color? } — one or more lines,
+ *                   all sharing the right axis. Colors default to PALETTE.
+ * @param title      chart title
  * @returns Promise<Buffer> PNG image buffer
  */
-async function buildDualAxisChartImage(labels, barData, barLabel, lineData, lineLabel, lineColor, title) {
-  const color = lineColor || PALETTE[0];
-  const rgb = hexToRgb(color);
-
+async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, title) {
   const topPadding = 90;
   const padding = { top: topPadding, right: 60, bottom: 50, left: 60 };
   const plotW = WIDTH - padding.left - padding.right;
   const plotH = HEIGHT - padding.top - padding.bottom;
 
   const leftMax = Math.ceil(Math.max(1, ...barData) / 10) * 10 || 10;
-  const rightMax = Math.ceil(Math.max(1, ...lineData) / 10) * 10 || 10;
+  const allLineValues = lineSeries.flatMap(s => s.data);
+  const rightMax = Math.ceil(Math.max(1, ...allLineValues) / 10) * 10 || 10;
 
   function xFor(i) {
     return padding.left + (labels.length > 1 ? (i / (labels.length - 1)) * plotW : plotW / 2);
@@ -248,10 +246,32 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineData, line
     barsSvg += `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${h.toFixed(2)}" fill="rgba(255,255,255,0.12)" rx="2"/>`;
   });
 
-  // Foreground line (right axis) with gradient fill
-  const points = lineData.map((v, i) => ({ x: xFor(i), y: yForRight(v) }));
-  const linePath = smoothPath(points);
-  const fillPath = `${linePath} L ${xFor(lineData.length - 1).toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${xFor(0).toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
+  // Foreground line(s) — right axis, each with its own gradient fill.
+  // Lower fill opacity when multiple lines to avoid muddy overlap.
+  const isMultiLine = lineSeries.length > 1;
+  let defsSvg = '';
+  let fillsSvg = '';
+  let linesSvg = '';
+
+  lineSeries.forEach((s, idx) => {
+    const color = s.color || PALETTE[idx % PALETTE.length];
+    const rgb = hexToRgb(color);
+    const gradId = `dualGrad${idx}`;
+    const topAlpha = isMultiLine ? 0.25 : 0.5;
+
+    defsSvg += `
+      <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${topAlpha}"/>
+        <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
+      </linearGradient>`;
+
+    const points = s.data.map((v, i) => ({ x: xFor(i), y: yForRight(v) }));
+    const linePath = smoothPath(points);
+    const fillPath = `${linePath} L ${xFor(s.data.length - 1).toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${xFor(0).toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
+
+    fillsSvg += `<path d="${fillPath}" fill="url(#${gradId})"/>`;
+    linesSvg += `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+  });
 
   // Gridlines referenced to the right (line) axis, Statbot-style
   const gridStep = rightMax / 5;
@@ -268,11 +288,12 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineData, line
     const y = yForLeft(v);
     leftAxisSvg += `<text x="${padding.left - 10}" y="${(y + 4).toFixed(2)}" fill="#999999" font-size="12" font-family="DejaVu Sans" text-anchor="end">${Math.round(v)}</text>`;
   }
-  // Right axis labels (colored, matches line color)
+  // Right axis labels — neutral color when multi-line (no single color to match)
+  const rightAxisColor = isMultiLine ? '#dcddde' : (lineSeries[0]?.color || PALETTE[0]);
   let rightAxisSvg = '';
   for (let v = 0; v <= rightMax; v += gridStep) {
     const y = yForRight(v);
-    rightAxisSvg += `<text x="${WIDTH - padding.right + 10}" y="${(y + 4).toFixed(2)}" fill="${color}" font-size="12" font-family="DejaVu Sans" text-anchor="start">${Math.round(v)}</text>`;
+    rightAxisSvg += `<text x="${WIDTH - padding.right + 10}" y="${(y + 4).toFixed(2)}" fill="${rightAxisColor}" font-size="12" font-family="DejaVu Sans" text-anchor="start">${Math.round(v)}</text>`;
   }
 
   // X-axis labels — thin out if too many
@@ -288,29 +309,31 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineData, line
     ? `<text x="30" y="32" fill="#e8e9eb" font-size="18" font-weight="bold" font-family="DejaVu Sans">${escapeXml(title)}</text>`
     : '';
 
-  // Legend below title: grey dot for bars, colored swatch for line
+  // Legend below title: grey dot for bars, one colored swatch per line series
   const legendY = title ? 56 : 24;
   const barLabelText = escapeXml(barLabel);
-  const lineLabelText = escapeXml(lineLabel);
-  const legendSvg = `
+  let legendX = 48 + barLabelText.length * 7.5 + 30;
+  let legendSvg = `
     <circle cx="35" cy="${legendY - 5}" r="5" fill="rgba(255,255,255,0.4)"/>
-    <text x="48" y="${legendY}" fill="#dcddde" font-size="14" font-family="DejaVu Sans">${barLabelText}</text>
-    <rect x="${48 + barLabelText.length * 7.5 + 30}" y="${legendY - 10}" width="22" height="12" rx="3" fill="none" stroke="${color}" stroke-width="2.5"/>
-    <text x="${48 + barLabelText.length * 7.5 + 60}" y="${legendY}" fill="#dcddde" font-size="14" font-family="DejaVu Sans">${lineLabelText}</text>`;
+    <text x="48" y="${legendY}" fill="#dcddde" font-size="14" font-family="DejaVu Sans">${barLabelText}</text>`;
+
+  lineSeries.forEach((s, idx) => {
+    const color = s.color || PALETTE[idx % PALETTE.length];
+    const labelText = escapeXml(s.label);
+    legendSvg += `
+      <rect x="${legendX}" y="${legendY - 10}" width="22" height="12" rx="3" fill="none" stroke="${color}" stroke-width="2.5"/>
+      <text x="${legendX + 30}" y="${legendY}" fill="#dcddde" font-size="14" font-family="DejaVu Sans">${labelText}</text>`;
+    legendX += 30 + labelText.length * 7.5 + 28;
+  });
 
   const svg = `
 <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="dualGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.5"/>
-      <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
-    </linearGradient>
-  </defs>
+  <defs>${defsSvg}</defs>
   <rect width="${WIDTH}" height="${HEIGHT}" fill="#2b2d31"/>
   ${gridSvg}
   ${barsSvg}
-  <path d="${fillPath}" fill="url(#dualGrad)"/>
-  <path d="${linePath}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  ${fillsSvg}
+  ${linesSvg}
   ${leftAxisSvg}
   ${rightAxisSvg}
   ${xLabelsSvg}

@@ -130,8 +130,8 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
     const totalPerDay = labels.map((_, i) => series.reduce((sum, s) => sum + (s.data[i] || 0), 0));
     buffer = await buildDualAxisChartImage(
       labels, totalPerDay, 'Total Rounds Played (All Maps)',
-      mapSeries.data, `${mapSeries.label} Popularity`,
-      '#5865F2', `${mapSeries.label} — Map Popularity vs Total Rounds`
+      [{ label: mapSeries.label, data: mapSeries.data }],
+      `${mapSeries.label} — Map Popularity vs Total Rounds`
     );
   } else {
     buffer = await buildLineChartImage(labels, series, `Map Popularity — Past ${days} Days`);

@@ -112,22 +112,33 @@ module.exports = {
     }
 
     if (mode === 'dual' || mode === 'all') {
-      const primaryData = generateSeries(days, MAP_PROFILES[primaryMap]);
-      const otherMaps = ALL_MAPS.filter(m => m !== primaryMap);
-      const otherData = otherMaps.map(m => generateSeries(days, MAP_PROFILES[m]));
+      // Dual mode uses the SAME map selection as overlay mode (primary +
+      // map2/3/4, or all 4 if none specified) — every selected map gets
+      // its own line on the right axis, bars show the combined total.
+      const dualMapsData = {};
+      overlayMaps.forEach(map => {
+        dualMapsData[map] = generateSeries(days, MAP_PROFILES[map]);
+      });
+
       const totalPerDay = labels.map((_, i) =>
-        primaryData[i] + otherData.reduce((sum, series) => sum + series[i], 0)
+        overlayMaps.reduce((sum, map) => sum + dualMapsData[map][i], 0)
       );
+
+      const lineSeries = overlayMaps.map(map => ({ label: map, data: dualMapsData[map] }));
+
+      const dualTitle = overlayMaps.length === 1
+        ? `${overlayMaps[0]} — Map Popularity vs Total Rounds`
+        : `Map Popularity vs Total Rounds (${overlayMaps.length} maps)`;
+
       const buffer = await buildDualAxisChartImage(
         labels, totalPerDay, 'Total Rounds Played (All Maps)',
-        primaryData, `${primaryMap} Popularity`,
-        '#5865F2', `${primaryMap} — Map Popularity vs Total Rounds`
+        lineSeries, dualTitle
       );
       files.push(new AttachmentBuilder(buffer, { name: 'testchart-dual.png' }));
     }
 
-    const overlayNote = (mode === 'overlay' || mode === 'all')
-      ? `\n*Overlay maps: ${overlayMaps.join(', ')}*`
+    const overlayNote = (mode === 'overlay' || mode === 'dual' || mode === 'all')
+      ? `\n*Maps: ${overlayMaps.join(', ')}*`
       : '';
 
     await interaction.channel.send({ content: `*(test data)*${overlayNote}`, files }).catch(err => {
