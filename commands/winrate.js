@@ -193,10 +193,34 @@ module.exports = {
     const topVehicle = [...topVehicleCounts.entries()].sort((a, b) => b[1] - a[1])[0];
     const topWeapon = [...topWeaponCounts.entries()].sort((a, b) => b[1] - a[1])[0];
 
+    // Most common map and co-occurring weapon/vehicle alongside the queried item
+    const mapCounts = new Map();
+    const coWeaponCounts = new Map();
+    const coVehicleCounts = new Map();
+    for (const r of rows) {
+      if (r.map) mapCounts.set(r.map, (mapCounts.get(r.map) || 0) + 1);
+      if (category === 'vehicle' && r.mvp_equipped_weapon) coWeaponCounts.set(r.mvp_equipped_weapon, (coWeaponCounts.get(r.mvp_equipped_weapon) || 0) + 1);
+      if (category === 'weapon' && r.mvp_equipped_vehicle) coVehicleCounts.set(r.mvp_equipped_vehicle, (coVehicleCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
+    }
+    const topMap = [...mapCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    const topCoWeapon = [...coWeaponCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    const topCoVehicle = [...coVehicleCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+
+    const coOccurrenceLines = [
+      `Most common map: ${topMap ? `${topMap[0]} (${topMap[1]}x)` : 'No data'}`,
+    ];
+    if (category === 'vehicle') {
+      coOccurrenceLines.push(`Most common gun alongside this car: ${topCoWeapon ? `${topCoWeapon[0]} (${topCoWeapon[1]}x)` : 'No data'}`);
+    } else if (category === 'weapon') {
+      coOccurrenceLines.push(`Most common car alongside this gun: ${topCoVehicle ? `${topCoVehicle[0]} (${topCoVehicle[1]}x)` : 'No data'}`);
+    }
+
     const mvpBreakdown = dinoWinRows.length > 0
       ? `Most common MVP car in DinoWin rounds: ${topVehicle ? `${topVehicle[0]} (${topVehicle[1]}x)` : 'No data'}\n` +
         `Most common MVP gun in DinoWin rounds: ${topWeapon ? `${topWeapon[0]} (${topWeapon[1]}x)` : 'No data'}\n` +
-        `*(not tied to a specific dino — that breakdown needs dino tracking, see /testwinrate for a preview)*`
+        `*(not tied to a specific dino — needs dino tracking, see /testwinrate for a preview)*\n\n` +
+        coOccurrenceLines.join('\n') +
+        `\nMost common pickups: not available yet — needs per-MVP pickup tracking (see /testwinrate for a preview once that field exists)`
       : 'No DinoWin rounds in this selection to break down.';
 
     const summary =

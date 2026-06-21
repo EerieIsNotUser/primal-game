@@ -16,6 +16,8 @@ const GAME_MODES = ['regular', 'pro', 'doubletrouble'];
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 
+const PICKUPS = ['Fuel Can', 'Repair Kit', 'Med Kit', 'Dino Tracker', 'Mine'];
+
 function generateFakeRound(daysAgo) {
   const playedAt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000 - randInt(0, 23) * 60 * 60 * 1000);
   return {
@@ -26,6 +28,7 @@ function generateFakeRound(daysAgo) {
     dino_name: pick(DINOS), // fake field — doesn't exist in real schema yet
     mvp_equipped_vehicle: pick(VEHICLES),
     mvp_equipped_weapon: pick(WEAPONS),
+    mvp_pickup: pick(PICKUPS), // fake field — doesn't exist in real schema yet
     mvp_damage: randInt(100, 2000),
   };
 }
@@ -138,8 +141,14 @@ module.exports = {
 
     let breakdown = '';
 
+    const mapCounts = new Map();
+    for (const r of matching) {
+      if (r.map) mapCounts.set(r.map, (mapCounts.get(r.map) || 0) + 1);
+    }
+    const topMap = [...mapCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    const mapLine = `Most common map: ${topMap ? `${topMap[0]} (${topMap[1]}x)` : 'No data'}`;
+
     if (category === 'dino') {
-      // Most common MVP car/gun when THIS specific dino won
       const dinoWins = matching.filter(r => r.round_result === 'DinoWin');
       const vCounts = new Map();
       const wCounts = new Map();
@@ -151,16 +160,32 @@ module.exports = {
       const topW = [...wCounts.entries()].sort((a, b) => b[1] - a[1])[0];
       breakdown =
         `Most common MVP car when ${item} won: ${topV ? `${topV[0]} (${topV[1]}x)` : 'No data'}\n` +
-        `Most common MVP gun when ${item} won: ${topW ? `${topW[0]} (${topW[1]}x)` : 'No data'}`;
+        `Most common MVP gun when ${item} won: ${topW ? `${topW[0]} (${topW[1]}x)` : 'No data'}\n` +
+        mapLine;
     } else {
-      // Most common winning dino against this car/gun
       const itemWinRounds = matching.filter(r => r.round_result === 'DinoWin');
       const dCounts = new Map();
+      const coCounts = new Map(); // co-occurring weapon or vehicle
       for (const r of itemWinRounds) {
         if (r.dino_name) dCounts.set(r.dino_name, (dCounts.get(r.dino_name) || 0) + 1);
+        if (category === 'vehicle' && r.mvp_equipped_weapon) coCounts.set(r.mvp_equipped_weapon, (coCounts.get(r.mvp_equipped_weapon) || 0) + 1);
+        if (category === 'weapon' && r.mvp_equipped_vehicle) coCounts.set(r.mvp_equipped_vehicle, (coCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
       }
       const topD = [...dCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-      breakdown = `Most common winning dino when ${item} was MVP: ${topD ? `${topD[0]} (${topD[1]}x)` : 'No data'}`;
+      const topCo = [...coCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      const coLabel = category === 'vehicle' ? 'gun alongside this car' : 'car alongside this gun';
+
+      const pickupCounts = new Map();
+      for (const r of itemWinRounds) {
+        if (r.mvp_pickup) pickupCounts.set(r.mvp_pickup, (pickupCounts.get(r.mvp_pickup) || 0) + 1);
+      }
+      const topPickup = [...pickupCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+
+      breakdown =
+        `Most common winning dino when ${item} was MVP: ${topD ? `${topD[0]} (${topD[1]}x)` : 'No data'}\n` +
+        `Most common ${coLabel}: ${topCo ? `${topCo[0]} (${topCo[1]}x)` : 'No data'}\n` +
+        `Most common pickup: ${topPickup ? `${topPickup[0]} (${topPickup[1]}x)` : 'No data'}\n` +
+        mapLine;
     }
 
     const summary =
