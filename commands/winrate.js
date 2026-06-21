@@ -230,11 +230,6 @@ module.exports = {
         .setAutocomplete(true)
     )
     .addStringOption(opt =>
-      opt.setName('dates')
-        .setDescription('Natural date range, e.g. "January 15th through March 16th" (overrides time_range)')
-        .setRequired(false)
-    )
-    .addStringOption(opt =>
       opt.setName('server_type')
         .setDescription('Server type to filter by')
         .setRequired(true)
@@ -245,6 +240,11 @@ module.exports = {
         .setDescription('Game mode to filter by')
         .setRequired(true)
         .addChoices(...GAME_MODE_OPTIONS.map(s => ({ name: s.name, value: s.value })))
+    )
+    .addStringOption(opt =>
+      opt.setName('dates')
+        .setDescription('Natural date range, e.g. "January 15th through March 16th" (overrides time_range)')
+        .setRequired(false)
     )
     .addStringOption(opt =>
       opt.setName('time_range')
