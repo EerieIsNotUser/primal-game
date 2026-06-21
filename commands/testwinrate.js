@@ -85,9 +85,9 @@ module.exports = {
     )
     .addIntegerOption(opt =>
       opt.setName('rounds')
-        .setDescription('Number of synthetic rounds to generate (default 200)')
-        .setMinValue(10)
-        .setMaxValue(1000)
+        .setDescription('Number of matching rounds to generate for this item (default 50)')
+        .setMinValue(1)
+        .setMaxValue(2000)
         .setRequired(false)
     ),
 
@@ -112,27 +112,25 @@ module.exports = {
 
     const category = interaction.options.getString('category');
     const item = interaction.options.getString('item');
-    const roundCount = interaction.options.getInteger('rounds') ?? 200;
+    const requestedCount = interaction.options.getInteger('rounds') ?? 50;
 
-    const allRows = [];
-    for (let i = 0; i < roundCount; i++) {
-      allRows.push(generateFakeRound(randInt(0, 90)));
-    }
-
-    let matching;
-    if (category === 'dino') {
-      matching = allRows.filter(r => r.dino_name === item);
-    } else if (category === 'vehicle') {
-      matching = allRows.filter(r => r.mvp_equipped_vehicle === item);
-    } else {
-      matching = allRows.filter(r => r.mvp_equipped_weapon === item);
+    // Generate exactly the requested number of MATCHING rounds for this
+    // item, not a random pool filtered down. Mirrors the real /winrate
+    // behavior, where you get every round that actually matches.
+    const matching = [];
+    for (let i = 0; i < requestedCount; i++) {
+      const round = generateFakeRound(randInt(0, 90));
+      if (category === 'dino') {
+        round.dino_name = item;
+      } else if (category === 'vehicle') {
+        round.mvp_equipped_vehicle = item;
+      } else {
+        round.mvp_equipped_weapon = item;
+      }
+      matching.push(round);
     }
 
     matching.sort((a, b) => new Date(a.played_at) - new Date(b.played_at));
-
-    if (matching.length === 0) {
-      return interaction.editReply(`No synthetic rounds matched **${item}** — try again, or increase rounds.`);
-    }
 
     const wins = matching.filter(r => r.round_result === 'SurvivorWin').length;
     const winRate = Math.round((wins / matching.length) * 100);
@@ -190,7 +188,7 @@ module.exports = {
 
     const summary =
       `*(test data)* **${item} (${categoryLabel}) won ${winRate}% for your selected dates**\n` +
-      `${matching.length} round${matching.length !== 1 ? 's' : ''} out of ${roundCount} generated\n\n` +
+      `${matching.length} round${matching.length !== 1 ? 's' : ''} generated\n\n` +
       breakdown;
 
     const table = buildPastebinTable(matching, category === 'dino');
