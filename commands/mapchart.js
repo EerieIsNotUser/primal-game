@@ -104,13 +104,104 @@ function bucketWinRateByMonth(rows, months) {
   return { labels, data };
 }
 
+// Fetch round_result + map for the past 6 months — used as the baseline
+// for detecting "noticeable" popularity shifts in the selected window.
+async function getSixMonthBaseline(supabase) {
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - 6);
+
+  const { data, error } = await supabase
+    .from('round_logs')
+    .select('map, round_result')
+    .gte('played_at', cutoff.toISOString());
+
+  if (error || !data) return null;
+  return data;
+}
+
+function mapShareOf(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    if (!row.map) continue;
+    counts.set(row.map, (counts.get(row.map) || 0) + 1);
+  }
+  const total = rows.length;
+  const shares = new Map();
+  for (const [map, count] of counts) {
+    shares.set(map, total > 0 ? count / total : 0);
+  }
+  return shares;
+}
+
+function winRateByMap(rows) {
+  const byMap = new Map(); // map -> { dinoWins, survivorWins, total }
+  for (const row of rows) {
+    if (!row.map) continue;
+    if (!byMap.has(row.map)) byMap.set(row.map, { dinoWins: 0, survivorWins: 0, total: 0 });
+    const m = byMap.get(row.map);
+    m.total++;
+    if (row.round_result === 'DinoWin') m.dinoWins++;
+    if (row.round_result === 'SurvivorWin') m.survivorWins++;
+  }
+  return byMap;
+}
+
+// Build the narrative message: popularity shifts (vs 6-month baseline) +
+// per-map dino/survivor win rates for the selected window.
+function buildChartNarrative(selectedRows, baselineRows, mapsShown) {
+  const lines = [];
+
+  // Popularity shift detection (only for maps actually shown in the chart)
+  if (baselineRows && baselineRows.length > 0) {
+    const selectedShare = mapShareOf(selectedRows);
+    const baselineShare = mapShareOf(baselineRows);
+
+    const shifts = [];
+    for (const map of mapsShown) {
+      const sel = (selectedShare.get(map) || 0) * 100;
+      const base = (baselineShare.get(map) || 0) * 100;
+      const delta = sel - base;
+      if (Math.abs(delta) >= 8) { // threshold: 8 percentage points
+        shifts.push({ map, delta, sel, base });
+      }
+    }
+    shifts.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+    if (shifts.length > 0) {
+      const shiftLines = shifts.slice(0, 3).map(s =>
+        `${s.map} is ${s.delta > 0 ? 'up' : 'down'} ${Math.abs(s.delta).toFixed(0)} pts vs its 6-month average (${s.base.toFixed(0)}% → ${s.sel.toFixed(0)}%)`
+      );
+      lines.push(`📊 Noticeable shift: ${shiftLines.join('; ')}.`);
+    } else {
+      lines.push(`📊 No noticeable popularity shift vs the 6-month average.`);
+    }
+  }
+
+  // Win rate per map (Dino vs Survivor), for the selected window only
+  const winRates = winRateByMap(selectedRows);
+  const winRateLines = mapsShown
+    .filter(map => winRates.has(map))
+    .map(map => {
+      const w = winRates.get(map);
+      const dinoPct = w.total > 0 ? Math.round((w.dinoWins / w.total) * 100) : 0;
+      const survivorPct = w.total > 0 ? Math.round((w.survivorWins / w.total) * 100) : 0;
+      return `${map}: Dino ${dinoPct}% / Survivor ${survivorPct}%`;
+    });
+
+  if (winRateLines.length > 0) {
+    lines.push(`⚔️ Win rate: ${winRateLines.join(' · ')}.`);
+  }
+
+  return lines.join('\n');
+}
+
 async function renderMapPopularity(interaction, supabase, days = 14, mapFilter = null) {
   const endDate = new Date();
   const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
   const { data: rows, error } = await supabase
     .from('round_logs')
-    .select('map, played_at')
+    .select('map, played_at, round_result')
     .gte('played_at', startDate.toISOString())
     .lte('played_at', endDate.toISOString());
 
@@ -120,13 +211,17 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
   const { labels, series } = bucketRoundsByMap(rows, startDate, endDate);
   if (series.length === 0) return interaction.editReply('No map data available to chart.');
 
+  const baselineRows = await getSixMonthBaseline(supabase);
+
   let buffer;
+  let mapsShown;
   if (mapFilter) {
     // Single map: dual-axis — grey bars = total rounds across ALL maps that
     // day, colored line = this specific map's rounds that day.
     const mapSeries = series.find(s => s.label.toLowerCase() === mapFilter.toLowerCase());
     if (!mapSeries) return interaction.editReply(`No data found for map "${mapFilter}".`);
 
+    mapsShown = [mapSeries.label];
     const totalPerDay = labels.map((_, i) => series.reduce((sum, s) => sum + (s.data[i] || 0), 0));
     buffer = await buildDualAxisChartImage(
       labels, totalPerDay, 'Total Rounds Played (All Maps)',
@@ -134,11 +229,15 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
       `${mapSeries.label} — Map Popularity vs Total Rounds`
     );
   } else {
+    mapsShown = series.map(s => s.label);
     buffer = await buildLineChartImage(labels, series, `Map Popularity — Past ${days} Days`);
   }
 
+  const narrative = buildChartNarrative(rows, baselineRows, mapsShown);
   const attachment = new AttachmentBuilder(buffer, { name: 'mapchart.png' });
-  return interaction.editReply({ content: `\`${rows.length} rounds · all servers\``, files: [attachment], components: [buildTypeSelectRow()] });
+  const content = `\`${rows.length} rounds · all servers\`\n${narrative}`;
+
+  return interaction.editReply({ content, files: [attachment], components: [buildTypeSelectRow()] });
 }
 
 async function renderWinRateOverTime(interaction, supabase, category, item, months) {

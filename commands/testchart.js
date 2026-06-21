@@ -21,6 +21,40 @@ function generateSeries(days, { base, amp, phase, noise }) {
   return data;
 }
 
+// Synthetic dino win % per map, used to fake the narrative analysis section
+// (mirrors real /mapchart's win-rate-per-map + popularity-shift narrative)
+const FAKE_DINO_WIN_PCT = {
+  'Jungle': 38, 'Canyon': 52, 'Cavern': 61, 'Primal Park': 45,
+};
+
+function generateFakeNarrative(mapsShown, overlayMaps) {
+  const lines = [];
+
+  // Fake popularity shift — randomly flag 0-2 maps as having "shifted"
+  const shiftCandidates = mapsShown.filter(() => Math.random() < 0.4);
+  if (shiftCandidates.length > 0) {
+    const shiftLines = shiftCandidates.slice(0, 3).map(map => {
+      const delta = Math.round((Math.random() * 20 + 8) * (Math.random() < 0.5 ? -1 : 1));
+      const base = Math.round(Math.random() * 30 + 15);
+      const sel = base + delta;
+      return `${map} is ${delta > 0 ? 'up' : 'down'} ${Math.abs(delta)} pts vs its 6-month average (${base}% → ${sel}%)`;
+    });
+    lines.push(`📊 *(test)* Noticeable shift: ${shiftLines.join('; ')}.`);
+  } else {
+    lines.push(`📊 *(test)* No noticeable popularity shift vs the 6-month average.`);
+  }
+
+  // Fake win rate per map shown
+  const winRateLines = mapsShown.map(map => {
+    const dinoPct = FAKE_DINO_WIN_PCT[map] ?? 50;
+    const survivorPct = 100 - dinoPct;
+    return `${map}: Dino ${dinoPct}% / Survivor ${survivorPct}%`;
+  });
+  lines.push(`⚔️ *(test)* Win rate: ${winRateLines.join(' · ')}.`);
+
+  return lines.join('\n');
+}
+
 function resolveMapName(input) {
   if (!input) return null;
   const normalized = input.trim().toLowerCase();
@@ -141,7 +175,12 @@ module.exports = {
       ? `\n*Maps: ${overlayMaps.join(', ')}*`
       : '';
 
-    await interaction.channel.send({ content: `*(test data)*${overlayNote}`, files }).catch(err => {
+    // Determine which maps are "shown" for narrative purposes — same logic
+    // as the real /mapchart: single mode = just primaryMap, others = overlayMaps
+    const narrativeMaps = mode === 'single' ? [primaryMap] : overlayMaps;
+    const narrative = generateFakeNarrative(narrativeMaps, overlayMaps);
+
+    await interaction.channel.send({ content: `*(test data)*${overlayNote}\n${narrative}`, files }).catch(err => {
       console.error('[testchart] send failed:', err.message);
     });
 
