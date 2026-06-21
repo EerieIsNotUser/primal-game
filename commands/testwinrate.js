@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
+const chrono = require('chrono-node');
 
 // ─── /testwinrate ────────────────────────────────────────────────────────
 // Synthetic-data version of /winrate. Includes a working dino path (with a
@@ -19,6 +20,25 @@ const MAX_ATTACHMENT_ROWS = 5000;
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+
+// Parse a natural-language date range like "January 15th through March 16th" —
+// same logic as real /winrate. Returns { startDate, endDate } or null.
+function parseDateRange(text) {
+  const results = chrono.parse(text, new Date());
+  if (results.length === 0) return null;
+  const result = results[0];
+  const startDate = result.start ? result.start.date() : null;
+  const endDate = result.end ? result.end.date() : (result.start ? result.start.date() : null);
+  if (!startDate) return null;
+  return { startDate, endDate: endDate ?? startDate };
+}
+
+// Generate a played_at timestamp within a specific date range
+function randomTimestampInRange(startDate, endDate) {
+  const startMs = startDate.getTime();
+  const endMs = endDate.getTime();
+  return new Date(startMs + Math.random() * (endMs - startMs));
+}
 
 function generateFakeRound(daysAgo) {
   const playedAt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000 - randInt(0, 23) * 60 * 60 * 1000);
@@ -117,6 +137,11 @@ module.exports = {
           { name: 'Double Trouble', value: 'doubletrouble' },
         )
     )
+    .addStringOption(opt =>
+      opt.setName('dates')
+        .setDescription('Natural date range, e.g. "January 15th through March 16th" (default: scattered across past 180 days)')
+        .setRequired(false)
+    )
     .addIntegerOption(opt =>
       opt.setName('rounds')
         .setDescription('Number of matching rounds to generate (default 50, max 10000 to test sampling cap)')
@@ -148,7 +173,19 @@ module.exports = {
     const item = interaction.options.getString('item');
     const serverType = interaction.options.getString('server_type');
     const gameMode = interaction.options.getString('game_mode');
+    const datesInput = interaction.options.getString('dates');
     const requestedCount = interaction.options.getInteger('rounds') ?? 50;
+
+    let dateRange = null;
+    if (datesInput) {
+      dateRange = parseDateRange(datesInput);
+      if (!dateRange) {
+        return interaction.editReply(
+          `❌ Couldn't understand the date range "${datesInput}". Try something like ` +
+          `"January 15th through March 16th" or "last 2 weeks".`
+        );
+      }
+    }
 
     // Generate exactly the requested number of MATCHING rounds for this
     // item — mirrors real /winrate, which returns every round that matches.
@@ -157,7 +194,9 @@ module.exports = {
     // feature ahead of the real schema supporting it.
     const matching = [];
     for (let i = 0; i < requestedCount; i++) {
-      const round = generateFakeRound(randInt(0, 180));
+      const round = dateRange
+        ? { ...generateFakeRound(0), played_at: randomTimestampInRange(dateRange.startDate, dateRange.endDate).toISOString() }
+        : generateFakeRound(randInt(0, 180));
       if (category === 'dino') round.dino_name = item;
       else if (category === 'vehicle') round.mvp_equipped_vehicle = item;
       else round.mvp_equipped_weapon = item;
@@ -253,9 +292,13 @@ module.exports = {
       ? `\n\n**Significant changes:**\n${changeLines.join('\n')}`
       : `\n\n*No significant changes vs the prior period (${baselineRate}% baseline, ${baseline.length} rounds).*`;
 
+    const periodLabel = dateRange
+      ? `${dateRange.startDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${dateRange.endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`
+      : 'past 180 days (scattered)';
+
     const summary =
       `*(test data)* **${item} (${categoryLabel}) won ${winRate}% for your selected dates**\n` +
-      `${matching.length} round${matching.length !== 1 ? 's' : ''} generated` +
+      `${periodLabel} · ${matching.length} round${matching.length !== 1 ? 's' : ''} generated` +
       changesSummary +
       `\n\n${breakdown}`;
 
