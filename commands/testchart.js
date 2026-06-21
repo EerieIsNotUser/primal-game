@@ -1,7 +1,5 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { buildLineChartUrl } = require('../modules/chart');
-
-const MAPS = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
+const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discord.js');
+const { buildLineChartImage } = require('../modules/chart');
 
 function generateSeries(days, base, amp, phase, noise) {
   const data = [];
@@ -39,12 +37,14 @@ module.exports = {
     }
 
     const embeds = [];
+    const files = [];
 
     if (mode === 'single' || mode === 'both') {
       const data = generateSeries(days, 45, 25, 0, 10);
-      const url = await buildLineChartUrl(labels, [{ label: 'Jungle', data }], 'Jungle — Rounds Played (Past 14 Days)');
-      console.log('[testchart] single URL:', url);
-      embeds.push(new EmbedBuilder().setColor(0x5865F2).setImage(url));
+      const buffer = await buildLineChartImage(labels, [{ label: 'Jungle', data }], 'Jungle — Rounds Played (Past 14 Days)');
+      const attachment = new AttachmentBuilder(buffer, { name: 'testchart-single.png' });
+      files.push(attachment);
+      embeds.push(new EmbedBuilder().setColor(0x5865F2).setImage('attachment://testchart-single.png'));
     }
 
     if (mode === 'overlay' || mode === 'both') {
@@ -54,12 +54,13 @@ module.exports = {
         { label: 'Cavern', data: generateSeries(days, 20, 10, 2.0, 6) },
         { label: 'Primal Park', data: generateSeries(days, 12, 8, 0.6, 5) },
       ];
-      const url = await buildLineChartUrl(labels, series, 'Map Popularity — Past 14 Days');
-      console.log('[testchart] overlay URL:', url);
-      embeds.push(new EmbedBuilder().setColor(0x5865F2).setImage(url));
+      const buffer = await buildLineChartImage(labels, series, 'Map Popularity — Past 14 Days');
+      const attachment = new AttachmentBuilder(buffer, { name: 'testchart-overlay.png' });
+      files.push(attachment);
+      embeds.push(new EmbedBuilder().setColor(0x5865F2).setImage('attachment://testchart-overlay.png'));
     }
 
-    await interaction.channel.send({ content: '*(test data)*', embeds }).catch(err => {
+    await interaction.channel.send({ content: '*(test data)*', embeds, files }).catch(err => {
       console.error('[testchart] send failed:', err.message);
     });
 

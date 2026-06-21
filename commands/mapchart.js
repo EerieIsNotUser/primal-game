@@ -1,5 +1,5 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { buildLineChartUrl, bucketRoundsByMap } = require('../modules/chart');
+const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discord.js');
+const { buildLineChartImage, bucketRoundsByMap } = require('../modules/chart');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -58,13 +58,14 @@ module.exports = {
       ? `${series[0]?.label ?? mapFilter} — Rounds Played (Past ${days} Days)`
       : `Map Popularity — Past ${days} Days`;
 
-    const url = await buildLineChartUrl(labels, series, title);
+    const buffer = await buildLineChartImage(labels, series, title);
+    const attachment = new AttachmentBuilder(buffer, { name: 'mapchart.png' });
 
     const embed = new EmbedBuilder()
       .setColor(0x5865F2)
-      .setImage(url)
+      .setImage('attachment://mapchart.png')
       .setFooter({ text: `PrimalGame · ${rows.length} rounds · all servers` });
 
-    return interaction.editReply({ embeds: [embed] });
+    return interaction.editReply({ embeds: [embed], files: [attachment] });
   },
 };
