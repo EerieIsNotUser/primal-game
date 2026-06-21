@@ -142,6 +142,15 @@ module.exports = {
         .setDescription('Natural date range, e.g. "January 15th through March 16th" (default: scattered across past 180 days)')
         .setRequired(false)
     )
+    .addStringOption(opt =>
+      opt.setName('result_filter')
+        .setDescription('Only show rounds with this outcome (default: both)')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Dino Wins only', value: 'DinoWin' },
+          { name: 'Survivor Wins only', value: 'SurvivorWin' },
+        )
+    )
     .addIntegerOption(opt =>
       opt.setName('rounds')
         .setDescription('Number of matching rounds to generate (default 50, max 10000 to test sampling cap)')
@@ -174,6 +183,7 @@ module.exports = {
     const serverType = interaction.options.getString('server_type');
     const gameMode = interaction.options.getString('game_mode');
     const datesInput = interaction.options.getString('dates');
+    const resultFilter = interaction.options.getString('result_filter');
     const requestedCount = interaction.options.getInteger('rounds') ?? 50;
 
     let dateRange = null;
@@ -205,14 +215,21 @@ module.exports = {
       matching.push(round);
     }
 
-    matching.sort((a, b) => new Date(a.played_at) - new Date(b.played_at));
+    let filtered = matching;
+    if (resultFilter) {
+      filtered = matching.filter(r => r.round_result === resultFilter);
+      if (filtered.length === 0) {
+        return interaction.editReply(`No generated rounds matched the result filter (${resultFilter}) — try again, or increase rounds.`);
+      }
+    }
+    filtered.sort((a, b) => new Date(a.played_at) - new Date(b.played_at));
 
-    const wins = matching.filter(r => r.round_result === 'SurvivorWin').length;
-    const winRate = Math.round((wins / matching.length) * 100);
+    const wins = filtered.filter(r => r.round_result === 'SurvivorWin').length;
+    const winRate = Math.round((wins / filtered.length) * 100);
     const categoryLabel = category === 'vehicle' ? 'Car' : category === 'weapon' ? 'Gun' : 'Dino';
 
     const mapCounts = new Map();
-    for (const r of matching) {
+    for (const r of filtered) {
       if (r.map) mapCounts.set(r.map, (mapCounts.get(r.map) || 0) + 1);
     }
     const topMap = [...mapCounts.entries()].sort((a, b) => b[1] - a[1])[0];
@@ -222,8 +239,8 @@ module.exports = {
     // which is already covered elsewhere, so general map stays as-is there.
     let mapLine;
     if (category === 'dino') {
-      const wonRows = matching.filter(r => r.round_result === 'DinoWin');
-      const lostRows = matching.filter(r => r.round_result === 'SurvivorWin');
+      const wonRows = filtered.filter(r => r.round_result === 'DinoWin');
+      const lostRows = filtered.filter(r => r.round_result === 'SurvivorWin');
 
       const wonMapCounts = new Map();
       for (const r of wonRows) {
@@ -246,8 +263,8 @@ module.exports = {
 
     let breakdown;
     if (category === 'dino') {
-      const dinoWins = matching.filter(r => r.round_result === 'DinoWin');
-      const dinoLosses = matching.filter(r => r.round_result === 'SurvivorWin');
+      const dinoWins = filtered.filter(r => r.round_result === 'DinoWin');
+      const dinoLosses = filtered.filter(r => r.round_result === 'SurvivorWin');
 
       const vCounts = new Map(), wCounts = new Map(), pCounts = new Map();
       for (const r of dinoWins) {
@@ -276,7 +293,7 @@ module.exports = {
         `Most common MVP gun when ${item} lost: ${topLW ? `${topLW[0]} (${topLW[1]}x)` : 'No data'}\n` +
         mapLine;
     } else {
-      const itemWinRounds = matching.filter(r => r.round_result === 'DinoWin');
+      const itemWinRounds = filtered.filter(r => r.round_result === 'DinoWin');
       const dCounts = new Map(), coCounts = new Map(), pCounts = new Map();
       for (const r of itemWinRounds) {
         if (r.dino_name) dCounts.set(r.dino_name, (dCounts.get(r.dino_name) || 0) + 1);
@@ -336,13 +353,15 @@ module.exports = {
       ? `${dateRange.startDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${dateRange.endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`
       : 'past 180 days (scattered)';
 
+    const resultFilterLabel = resultFilter ? ` · ${resultFilter === 'DinoWin' ? 'Dino Wins only' : 'Survivor Wins only'}` : '';
+
     const summary =
       `*(test data)* **${item} (${categoryLabel}) won ${winRate}% for your selected dates**\n` +
-      `${periodLabel} · ${matching.length} round${matching.length !== 1 ? 's' : ''} generated` +
+      `${periodLabel} · ${filtered.length} round${filtered.length !== 1 ? 's' : ''} generated${resultFilterLabel}` +
       changesSummary +
       `\n\n${breakdown}`;
 
-    const { rows: tableRows, sampled, originalCount } = capAndSample(matching);
+    const { rows: tableRows, sampled, originalCount } = capAndSample(filtered);
     const table = buildPastebinTable(tableRows, category === 'dino');
     const buffer = Buffer.from(table, 'utf8');
     const attachment = new AttachmentBuilder(buffer, { name: `test-winrate-${item.replace(/\s+/g, '-')}-${Date.now()}.txt` });
