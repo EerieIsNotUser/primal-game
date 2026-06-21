@@ -21,7 +21,7 @@ const WEAPONS = ['Pistol', 'Shotgun', 'MP5', 'Light Sniper', 'AR-15', 'AK-47', '
 // Placeholder list — no dino field exists in real payload yet
 const DINOS = ['T-Rex', 'Pachy', 'Raptor', 'Carno', 'Dilo', 'Baryonyx', 'Cerato', 'Giga', 'Spino', 'Trike', 'Deino', 'Bronto', 'Exoraptor'];
 
-const SERVER_TYPES = [
+const GAME_MODES = [
   { name: 'All', value: 'all' },
   { name: 'Regular / Casual', value: 'regular' },
   { name: 'Pro', value: 'pro' },
@@ -120,9 +120,9 @@ module.exports = {
         .setAutocomplete(true)
     )
     .addStringOption(opt =>
-      opt.setName('server_type')
-        .setDescription('Filter by server type (default: all)')
-        .addChoices(...SERVER_TYPES.map(s => ({ name: s.name, value: s.value })))
+      opt.setName('game_mode')
+        .setDescription('Filter by game mode (default: all)')
+        .addChoices(...GAME_MODES.map(s => ({ name: s.name, value: s.value })))
         .setRequired(false)
     )
     .addStringOption(opt =>
@@ -153,13 +153,15 @@ module.exports = {
 
     const category = interaction.options.getString('category');
     const item = interaction.options.getString('item');
-    const serverType = interaction.options.getString('server_type') ?? 'all';
+    const serverType = interaction.options.getString('game_mode') ?? 'all';
     const days = interaction.options.getString('time_range') ?? '30';
 
     if (category === 'dino') {
       return interaction.editReply(
         `❌ Dino win rate isn't available yet — the current round logging doesn't track which dino was played. ` +
-        `This is a known gap, flagged for KKG. Once that field exists, this command will work the same way it does for vehicles/weapons.`
+        `This is a known gap, flagged for KKG. Once that field exists, this command will work the same way it does for vehicles/weapons, ` +
+        `including "most common winning dino against a car/gun" breakdowns.\n\n` +
+        `Use \`/testwinrate\` to preview this feature with synthetic data.`
       );
     }
 
@@ -175,12 +177,33 @@ module.exports = {
 
     const winRate = computeWinRate(rows);
     const timeLabel = TIME_RANGES.find(t => t.value === days)?.name ?? 'selected period';
-    const serverLabel = SERVER_TYPES.find(s => s.value === serverType)?.name ?? 'All';
+    const serverLabel = GAME_MODES.find(s => s.value === serverType)?.name ?? 'All';
+
+    const categoryLabel = category === 'vehicle' ? 'Car' : category === 'weapon' ? 'Gun' : 'Dino';
+
+    // Most common MVP car/gun across DinoWin rounds (general, not tied to a
+    // specific dino — that breakdown isn't possible until dino tracking exists)
+    const dinoWinRows = rows.filter(r => r.round_result === 'DinoWin');
+    const topVehicleCounts = new Map();
+    const topWeaponCounts = new Map();
+    for (const r of dinoWinRows) {
+      if (r.mvp_equipped_vehicle) topVehicleCounts.set(r.mvp_equipped_vehicle, (topVehicleCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
+      if (r.mvp_equipped_weapon) topWeaponCounts.set(r.mvp_equipped_weapon, (topWeaponCounts.get(r.mvp_equipped_weapon) || 0) + 1);
+    }
+    const topVehicle = [...topVehicleCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    const topWeapon = [...topWeaponCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+
+    const mvpBreakdown = dinoWinRows.length > 0
+      ? `Most common MVP car in DinoWin rounds: ${topVehicle ? `${topVehicle[0]} (${topVehicle[1]}x)` : 'No data'}\n` +
+        `Most common MVP gun in DinoWin rounds: ${topWeapon ? `${topWeapon[0]} (${topWeapon[1]}x)` : 'No data'}\n` +
+        `*(not tied to a specific dino — that breakdown needs dino tracking, see /testwinrate for a preview)*`
+      : 'No DinoWin rounds in this selection to break down.';
 
     const summary =
-      `**Winrate over ${timeLabel}, ${winRate}%**\n` +
-      `${item} (${category}) · ${serverLabel} servers · ${rows.length} round${rows.length !== 1 ? 's' : ''}\n` +
-      `*(MVP-correlation proxy — not true per-item usage win rate, see /winrate caveats)*`;
+      `**${item} (${categoryLabel}) won ${winRate}% for your selected dates**\n` +
+      `${timeLabel} · ${serverLabel} servers · ${rows.length} round${rows.length !== 1 ? 's' : ''}\n` +
+      `*(MVP-correlation proxy — not true per-item usage win rate, see /winrate caveats)*\n\n` +
+      mvpBreakdown;
 
     const table = buildPastebinTable(rows);
     const buffer = Buffer.from(table, 'utf8');

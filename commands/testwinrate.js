@@ -134,9 +134,39 @@ module.exports = {
     const wins = matching.filter(r => r.round_result === 'SurvivorWin').length;
     const winRate = Math.round((wins / matching.length) * 100);
 
+    const categoryLabel = category === 'vehicle' ? 'Car' : category === 'weapon' ? 'Gun' : 'Dino';
+
+    let breakdown = '';
+
+    if (category === 'dino') {
+      // Most common MVP car/gun when THIS specific dino won
+      const dinoWins = matching.filter(r => r.round_result === 'DinoWin');
+      const vCounts = new Map();
+      const wCounts = new Map();
+      for (const r of dinoWins) {
+        if (r.mvp_equipped_vehicle) vCounts.set(r.mvp_equipped_vehicle, (vCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
+        if (r.mvp_equipped_weapon) wCounts.set(r.mvp_equipped_weapon, (wCounts.get(r.mvp_equipped_weapon) || 0) + 1);
+      }
+      const topV = [...vCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      const topW = [...wCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      breakdown =
+        `Most common MVP car when ${item} won: ${topV ? `${topV[0]} (${topV[1]}x)` : 'No data'}\n` +
+        `Most common MVP gun when ${item} won: ${topW ? `${topW[0]} (${topW[1]}x)` : 'No data'}`;
+    } else {
+      // Most common winning dino against this car/gun
+      const itemWinRounds = matching.filter(r => r.round_result === 'DinoWin');
+      const dCounts = new Map();
+      for (const r of itemWinRounds) {
+        if (r.dino_name) dCounts.set(r.dino_name, (dCounts.get(r.dino_name) || 0) + 1);
+      }
+      const topD = [...dCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      breakdown = `Most common winning dino when ${item} was MVP: ${topD ? `${topD[0]} (${topD[1]}x)` : 'No data'}`;
+    }
+
     const summary =
-      `*(test data)* **Winrate over generated sample, ${winRate}%**\n` +
-      `${item} (${category}) · ${matching.length} round${matching.length !== 1 ? 's' : ''} out of ${roundCount} generated`;
+      `*(test data)* **${item} (${categoryLabel}) won ${winRate}% for your selected dates**\n` +
+      `${matching.length} round${matching.length !== 1 ? 's' : ''} out of ${roundCount} generated\n\n` +
+      breakdown;
 
     const table = buildPastebinTable(matching, category === 'dino');
     const buffer = Buffer.from(table, 'utf8');
