@@ -1,7 +1,17 @@
 const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
 const { buildLineChartImage, buildDualAxisChartImage } = require('../modules/chart');
 
-function generateSeries(days, base, amp, phase, noise) {
+const ALL_MAPS = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
+
+// Deterministic-ish flavor per map so different maps don't all look identical
+const MAP_PROFILES = {
+  'Jungle':      { base: 45, amp: 25, phase: 0,   noise: 10 },
+  'Canyon':      { base: 30, amp: 15, phase: 1.2, noise: 8  },
+  'Cavern':      { base: 20, amp: 10, phase: 2.0, noise: 6  },
+  'Primal Park': { base: 12, amp: 8,  phase: 0.6, noise: 5  },
+};
+
+function generateSeries(days, { base, amp, phase, noise }) {
   const data = [];
   for (let i = 0; i < days; i++) {
     const x = (i / days) * Math.PI * 1.5;
@@ -9,6 +19,12 @@ function generateSeries(days, base, amp, phase, noise) {
     data.push(Math.max(0, Math.round(val)));
   }
   return data;
+}
+
+function resolveMapName(input) {
+  if (!input) return null;
+  const normalized = input.trim().toLowerCase();
+  return ALL_MAPS.find(m => m.toLowerCase() === normalized) ?? null;
 }
 
 module.exports = {
@@ -20,15 +36,56 @@ module.exports = {
         .setDescription('Which chart type(s) to preview')
         .addChoices(
           { name: 'Single Map', value: 'single' },
-          { name: 'Overlay (multiple maps)', value: 'overlay' },
-          { name: 'Dual-Axis (volume backdrop + line, matches /mapchart map:)', value: 'dual' },
+          { name: 'Overlay (pick 2-4 maps)', value: 'overlay' },
+          { name: 'Dual-Axis (volume backdrop + line)', value: 'dual' },
           { name: 'All', value: 'all' },
-        )),
+        ))
+    .addStringOption(opt =>
+      opt.setName('map')
+        .setDescription('Map for Single Map / Dual-Axis modes (default: Jungle)')
+        .setRequired(false)
+        .addChoices(...ALL_MAPS.map(m => ({ name: m, value: m })))
+    )
+    .addStringOption(opt =>
+      opt.setName('map2')
+        .setDescription('2nd map to include in Overlay mode')
+        .setRequired(false)
+        .addChoices(...ALL_MAPS.map(m => ({ name: m, value: m })))
+    )
+    .addStringOption(opt =>
+      opt.setName('map3')
+        .setDescription('3rd map to include in Overlay mode')
+        .setRequired(false)
+        .addChoices(...ALL_MAPS.map(m => ({ name: m, value: m })))
+    )
+    .addStringOption(opt =>
+      opt.setName('map4')
+        .setDescription('4th map to include in Overlay mode')
+        .setRequired(false)
+        .addChoices(...ALL_MAPS.map(m => ({ name: m, value: m })))
+    ),
 
   async execute(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
     const mode = interaction.options.getString('mode') || 'all';
+    const primaryMap = resolveMapName(interaction.options.getString('map')) || 'Jungle';
+
+    // Build overlay map list: primary map + any of map2/3/4 that were picked,
+    // deduplicated. If none of map2/3/4 given, overlay falls back to all 4.
+    const extraMaps = [
+      interaction.options.getString('map2'),
+      interaction.options.getString('map3'),
+      interaction.options.getString('map4'),
+    ].map(resolveMapName).filter(Boolean);
+
+    let overlayMaps;
+    if (extraMaps.length > 0) {
+      overlayMaps = [...new Set([primaryMap, ...extraMaps])];
+    } else {
+      overlayMaps = ALL_MAPS;
+    }
+
     const days = 14;
     const labels = [];
     const now = new Date();
@@ -40,41 +97,40 @@ module.exports = {
     const files = [];
 
     if (mode === 'single' || mode === 'all') {
-      const data = generateSeries(days, 45, 25, 0, 10);
-      const buffer = await buildLineChartImage(labels, [{ label: 'Jungle', data }], 'Jungle — Rounds Played (Past 14 Days)');
+      const data = generateSeries(days, MAP_PROFILES[primaryMap]);
+      const buffer = await buildLineChartImage(labels, [{ label: primaryMap, data }], `${primaryMap} — Rounds Played (Past 14 Days)`);
       files.push(new AttachmentBuilder(buffer, { name: 'testchart-single.png' }));
     }
 
     if (mode === 'overlay' || mode === 'all') {
-      const series = [
-        { label: 'Jungle', data: generateSeries(days, 45, 25, 0, 10) },
-        { label: 'Canyon', data: generateSeries(days, 30, 15, 1.2, 8) },
-        { label: 'Cavern', data: generateSeries(days, 20, 10, 2.0, 6) },
-        { label: 'Primal Park', data: generateSeries(days, 12, 8, 0.6, 5) },
-      ];
+      const series = overlayMaps.map(map => ({
+        label: map,
+        data: generateSeries(days, MAP_PROFILES[map]),
+      }));
       const buffer = await buildLineChartImage(labels, series, 'Map Popularity — Past 14 Days');
       files.push(new AttachmentBuilder(buffer, { name: 'testchart-overlay.png' }));
     }
 
     if (mode === 'dual' || mode === 'all') {
-      const jungleData = generateSeries(days, 45, 25, 0, 10);
-      const otherMapsData = [
-        generateSeries(days, 30, 15, 1.2, 8),
-        generateSeries(days, 20, 10, 2.0, 6),
-        generateSeries(days, 12, 8, 0.6, 5),
-      ];
+      const primaryData = generateSeries(days, MAP_PROFILES[primaryMap]);
+      const otherMaps = ALL_MAPS.filter(m => m !== primaryMap);
+      const otherData = otherMaps.map(m => generateSeries(days, MAP_PROFILES[m]));
       const totalPerDay = labels.map((_, i) =>
-        jungleData[i] + otherMapsData.reduce((sum, series) => sum + series[i], 0)
+        primaryData[i] + otherData.reduce((sum, series) => sum + series[i], 0)
       );
       const buffer = await buildDualAxisChartImage(
         labels, totalPerDay, 'Total Rounds Played (All Maps)',
-        jungleData, 'Jungle Popularity',
-        '#5865F2', 'Jungle — Map Popularity vs Total Rounds'
+        primaryData, `${primaryMap} Popularity`,
+        '#5865F2', `${primaryMap} — Map Popularity vs Total Rounds`
       );
       files.push(new AttachmentBuilder(buffer, { name: 'testchart-dual.png' }));
     }
 
-    await interaction.channel.send({ content: '*(test data)*', files }).catch(err => {
+    const overlayNote = (mode === 'overlay' || mode === 'all')
+      ? `\n*Overlay maps: ${overlayMaps.join(', ')}*`
+      : '';
+
+    await interaction.channel.send({ content: `*(test data)*${overlayNote}`, files }).catch(err => {
       console.error('[testchart] send failed:', err.message);
     });
 
