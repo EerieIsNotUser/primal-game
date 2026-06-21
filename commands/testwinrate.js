@@ -52,6 +52,7 @@ function buildPastebinTable(rows, includeDino) {
     { key: 'played_at', label: 'Played At', width: 20 },
     { key: 'map', label: 'Map', width: 14 },
     { key: 'round_result', label: 'Result', width: 14 },
+    { key: 'server_type', label: 'Server', width: 9 },
     { key: 'game_mode', label: 'Mode', width: 14 },
     ...(includeDino ? [{ key: 'dino_name', label: 'Dino', width: 12 }] : []),
     { key: 'mvp_equipped_vehicle', label: 'MVP Vehicle', width: 14 },
@@ -98,6 +99,24 @@ module.exports = {
         .setRequired(true)
         .setAutocomplete(true)
     )
+    .addStringOption(opt =>
+      opt.setName('server_type')
+        .setDescription('Server type to filter by')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Regular', value: 'regular' },
+          { name: 'Pro', value: 'pro' },
+        )
+    )
+    .addStringOption(opt =>
+      opt.setName('game_mode')
+        .setDescription('Game mode to filter by')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Standard', value: 'standard' },
+          { name: 'Double Trouble', value: 'doubletrouble' },
+        )
+    )
     .addIntegerOption(opt =>
       opt.setName('rounds')
         .setDescription('Number of matching rounds to generate (default 50, max 10000 to test sampling cap)')
@@ -127,16 +146,23 @@ module.exports = {
 
     const category = interaction.options.getString('category');
     const item = interaction.options.getString('item');
+    const serverType = interaction.options.getString('server_type');
+    const gameMode = interaction.options.getString('game_mode');
     const requestedCount = interaction.options.getInteger('rounds') ?? 50;
 
     // Generate exactly the requested number of MATCHING rounds for this
     // item — mirrors real /winrate, which returns every round that matches.
+    // Unlike real /winrate, this CAN combine server_type + game_mode
+    // (e.g. Pro + Double Trouble) since it's synthetic — previews the
+    // feature ahead of the real schema supporting it.
     const matching = [];
     for (let i = 0; i < requestedCount; i++) {
       const round = generateFakeRound(randInt(0, 180));
       if (category === 'dino') round.dino_name = item;
       else if (category === 'vehicle') round.mvp_equipped_vehicle = item;
       else round.mvp_equipped_weapon = item;
+      round.server_type = serverType;
+      round.game_mode = gameMode;
       matching.push(round);
     }
 
@@ -191,10 +217,47 @@ module.exports = {
         mapLine;
     }
 
+    // Generate a comparable "previous period" batch for the same item to
+    // simulate a baseline — same pattern as real /winrate's all-time comparison.
+    const baselineCount = randInt(Math.floor(requestedCount * 0.5), requestedCount * 2);
+    const baseline = [];
+    for (let i = 0; i < baselineCount; i++) {
+      const round = generateFakeRound(randInt(180, 360)); // older period
+      if (category === 'dino') round.dino_name = item;
+      else if (category === 'vehicle') round.mvp_equipped_vehicle = item;
+      else round.mvp_equipped_weapon = item;
+      round.server_type = serverType;
+      round.game_mode = gameMode;
+      baseline.push(round);
+    }
+    const baselineWins = baseline.filter(r => r.round_result === 'SurvivorWin').length;
+    const baselineRate = Math.round((baselineWins / baseline.length) * 100);
+
+    const changeLines = [];
+    const winDelta = winRate - baselineRate;
+    if (Math.abs(winDelta) >= 5) {
+      changeLines.push(`⚠️ Win rate is ${winDelta > 0 ? 'up' : 'down'} ${Math.abs(winDelta)} points vs the prior period (${baselineRate}% → ${winRate}%).`);
+    }
+
+    // Compare top map/co-occurrence between the two periods for a second signal
+    const baselineMapCounts = new Map();
+    for (const r of baseline) {
+      if (r.map) baselineMapCounts.set(r.map, (baselineMapCounts.get(r.map) || 0) + 1);
+    }
+    const baselineTopMap = [...baselineMapCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (topMap && baselineTopMap && topMap[0] !== baselineTopMap[0]) {
+      changeLines.push(`Most common map changed from ${baselineTopMap[0]} to ${topMap[0]}.`);
+    }
+
+    const changesSummary = changeLines.length > 0
+      ? `\n\n**Significant changes:**\n${changeLines.join('\n')}`
+      : `\n\n*No significant changes vs the prior period (${baselineRate}% baseline, ${baseline.length} rounds).*`;
+
     const summary =
       `*(test data)* **${item} (${categoryLabel}) won ${winRate}% for your selected dates**\n` +
-      `${matching.length} round${matching.length !== 1 ? 's' : ''} generated\n\n` +
-      breakdown;
+      `${matching.length} round${matching.length !== 1 ? 's' : ''} generated` +
+      changesSummary +
+      `\n\n${breakdown}`;
 
     const { rows: tableRows, sampled, originalCount } = capAndSample(matching);
     const table = buildPastebinTable(tableRows, category === 'dino');

@@ -23,11 +23,14 @@ const VEHICLES = ['ATV', 'Golf Cart', 'Jeep', 'Hypercar', 'Pickup Truck', 'Polic
 const WEAPONS = ['Pistol', 'Shotgun', 'MP5', 'Light Sniper', 'AR-15', 'AK-47', 'Crossbow', 'Heavy Sniper', 'AR-Dino', 'AR-Uni', 'P90', 'Water Gun', 'Raygun', 'Scar', 'Trike Shotgun', 'Minigun', 'IWS 2000', 'LMG', 'Deagle', 'Railgun', 'Plasma Rifle', 'Flamethrower', 'Tri-Beam', 'Scrapyard Shotgun', 'SPAS-12'];
 const DINOS = ['T-Rex', 'Pachy', 'Raptor', 'Carno', 'Dilo', 'Baryonyx', 'Cerato', 'Giga', 'Spino', 'Trike', 'Deino', 'Bronto', 'Exoraptor'];
 
-const GAME_MODES = [
-  { name: 'All', value: 'all' },
-  { name: 'Regular / Casual', value: 'regular' },
+const SERVER_TYPES = [
+  { name: 'Regular', value: 'regular' },
   { name: 'Pro', value: 'pro' },
-  { name: 'Double Trouble', value: 'doubletrouble' },
+];
+
+const GAME_MODE_OPTIONS = [
+  { name: 'Standard', value: 'standard' },
+  { name: 'Double Trouble (placeholder — not cross-filterable yet)', value: 'doubletrouble' },
 ];
 
 const TIME_RANGES = [
@@ -232,10 +235,16 @@ module.exports = {
         .setRequired(false)
     )
     .addStringOption(opt =>
+      opt.setName('server_type')
+        .setDescription('Server type to filter by')
+        .setRequired(true)
+        .addChoices(...SERVER_TYPES.map(s => ({ name: s.name, value: s.value })))
+    )
+    .addStringOption(opt =>
       opt.setName('game_mode')
-        .setDescription('Filter by game mode (default: all)')
-        .addChoices(...GAME_MODES.map(s => ({ name: s.name, value: s.value })))
-        .setRequired(false)
+        .setDescription('Game mode to filter by')
+        .setRequired(true)
+        .addChoices(...GAME_MODE_OPTIONS.map(s => ({ name: s.name, value: s.value })))
     )
     .addStringOption(opt =>
       opt.setName('time_range')
@@ -265,7 +274,23 @@ module.exports = {
 
     const category = interaction.options.getString('category');
     const item = interaction.options.getString('item');
-    const gameMode = interaction.options.getString('game_mode') ?? 'all';
+    const serverType = interaction.options.getString('server_type');
+    const gameModeChoice = interaction.options.getString('game_mode');
+
+    if (gameModeChoice === 'doubletrouble' && serverType) {
+      return interaction.editReply(
+        `❌ Cross-filtering Double Trouble with a specific server type isn't possible yet — ` +
+        `the current data only tracks one combined game_mode value, not server type and game mode independently. ` +
+        `This is a known gap, flagged for KKG.\n\n` +
+        `Use \`/testwinrate\` to preview this once that field exists.`
+      );
+    }
+
+    // Until the schema splits server_type and game_mode, query against the
+    // existing single game_mode column using server_type as the value
+    // (Double Trouble path above is blocked, so this only ever receives
+    // 'regular' or 'pro' here).
+    const gameMode = serverType;
     const datesInput = interaction.options.getString('dates');
     const days = interaction.options.getString('time_range') ?? '30';
 
