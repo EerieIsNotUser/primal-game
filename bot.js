@@ -56,6 +56,7 @@ client.once('ready', () => {
   require('./modules/map-history-digest')(client, { supabase });
   require('./modules/anomaly-alerts')(client, { supabase });
   require('./modules/balance-report')(client, { supabase });
+  require('./modules/raw-data-digest')(client, { supabase });
 });
 
 client.on('interactionCreate', async interaction => {
