@@ -1,5 +1,6 @@
-const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
 const chrono = require('chrono-node');
+const { buildStatCard } = require('../modules/chart');
 
 // ─── /testwinrate ────────────────────────────────────────────────────────
 // Synthetic-data version of /winrate. Includes a working dino path (with a
@@ -369,70 +370,67 @@ module.exports = {
 
     const resultFilterLabel = resultFilter ? ` · ${resultFilter === 'DinoWin' ? 'Dino Wins only' : 'Survivor Wins only'}` : '';
 
-    // ── Embed ─────────────────────────────────────────────────────────────
-    const winColor = winRate >= 55 ? 0x57F287 : winRate <= 40 ? 0xED4245 : 0xFEE75C;
+    // ── Stat card ─────────────────────────────────────────────────────────
+    const winColorHex = winRate >= 55 ? '#57F287' : winRate <= 40 ? '#ED4245' : '#FEE75C';
     const serverLabel = serverType === 'pro' ? 'Pro' : 'Regular';
 
     const deltaNote = changeLines.length > 0
-      ? '\n' + changeLines.map(l => l.replace(/^⚠️\s*/, '')).join('\n')
+      ? changeLines.map(l => l.replace(/^⚠️\s*/, '')).join(' · ')
       : '';
 
-    const embed = new EmbedBuilder()
-      .setColor(winColor)
-      .setAuthor({ name: `${categoryLabel} · ${serverLabel} · ${gameMode}  (test data)` })
-      .setTitle(item)
-      .setDescription(
-        `**${winRate}%** ${category === 'dino' ? 'dino' : 'survivor'} win rate  ·  ` +
-        `${filtered.length.toLocaleString()} rounds  ·  ${periodLabel}${resultFilterLabel}` +
-        deltaNote
-      )
-      .addFields(
-        { name: 'Win Rate',       value: `${winRate}%`,                                   inline: true },
-        { name: 'Rounds',         value: filtered.length.toLocaleString(),                 inline: true },
-        { name: 'vs Prior Period', value: `${baselineRate}%  (${baseline.length} rounds)`, inline: true },
-        { name: 'Best Map',       value: topMap ? `${topMap[0]} (${topMap[1]}x)` : '—',   inline: true },
-      );
-
+    let panels;
     if (category === 'dino') {
-      embed.addFields(
+      panels = [
+        { title: 'Best Map', lines: [topMap ? `${topMap[0]} (${topMap[1]}x)` : '—'] },
         {
-          name:  'When Won',
-          value: `Car: ${breakdownData.wonCar}\nGun: ${breakdownData.wonGun}\nPickup: ${breakdownData.pickup}`,
-          inline: true,
+          title: 'When Won',
+          lines: [`Car: ${breakdownData.wonCar}`, `Gun: ${breakdownData.wonGun}`, `Pickup: ${breakdownData.pickup}`],
+          color: '#57F287',
         },
         {
-          name:  'When Lost',
-          value: `Car: ${breakdownData.lostCar}\nGun: ${breakdownData.lostGun}`,
-          inline: true,
+          title: 'When Lost',
+          lines: [`Car: ${breakdownData.lostCar}`, `Gun: ${breakdownData.lostGun}`],
+          color: '#ED4245',
         },
-      );
+      ];
     } else {
-      embed.addFields(
-        { name: 'Winning Dino',          value: breakdownData.topDino, inline: true },
-        { name: breakdownData.coLabel,   value: breakdownData.coItem,  inline: true },
-        { name: 'Pickup',                value: breakdownData.pickup,  inline: true },
-      );
+      panels = [
+        { title: 'Best Map',            lines: [topMap ? `${topMap[0]} (${topMap[1]}x)` : '—'] },
+        { title: breakdownData.coLabel, lines: [breakdownData.coItem]  },
+        { title: 'Winning Dino',        lines: [breakdownData.topDino] },
+      ];
     }
 
-    embed
-      .setFooter({ text: 'Synthetic data · PrimalGame' })
-      .setTimestamp();
+    const cardBuffer = await buildStatCard({
+      title:    item,
+      subtitle: `${categoryLabel} · ${serverLabel} · ${gameMode}  (test)`,
+      stats: [
+        { label: 'Win Rate',     value: `${winRate}%`,                          color: winColorHex },
+        { label: 'Rounds',       value: filtered.length.toLocaleString(),        color: '#5865F2'   },
+        { label: 'Prior Period', value: `${baselineRate}% (${baseline.length})`, color: '#72767d'   },
+      ],
+      lookback: periodLabel,
+      panels,
+      note: deltaNote,
+    });
 
     // ── Attachment ────────────────────────────────────────────────────────
     const { rows: tableRows, sampled, originalCount } = capAndSample(filtered);
-    const table = buildPastebinTable(tableRows, category === 'dino');
-    const buffer = Buffer.from(table, 'utf8');
-    const attachment = new AttachmentBuilder(buffer, { name: `test-winrate-${item.replace(/\s+/g, '-')}-${Date.now()}.txt` });
+    const table          = buildPastebinTable(tableRows, category === 'dino');
+    const cardAttachment = new AttachmentBuilder(cardBuffer, { name: 'winrate.png' });
+    const txtAttachment  = new AttachmentBuilder(Buffer.from(table, 'utf8'), {
+      name: `test-winrate-${item.replace(/\s+/g, '-')}-${Date.now()}.txt`,
+    });
 
-    const replyPayload = { embeds: [embed], files: [attachment] };
+    const replyPayload = { files: [cardAttachment, txtAttachment] };
     if (sampled) {
-      replyPayload.content = `📊 *Attachment: evenly-sampled ${tableRows.length.toLocaleString()} of ${originalCount.toLocaleString()} rounds. Win rate uses all ${originalCount.toLocaleString()} rows.*`;
+      replyPayload.content = `*Attachment: evenly-sampled ${tableRows.length.toLocaleString()} of ${originalCount.toLocaleString()} rounds — win rate calculated from all ${originalCount.toLocaleString()}.*`;
     }
 
     await interaction.channel.send(replyPayload).catch(err => {
       console.error('[testwinrate] send failed:', err.message);
     });
 
-    return interaction.editReply('Posted test winrate embed above.');
+    return interaction.editReply('Posted test winrate card above.');
   },
 };

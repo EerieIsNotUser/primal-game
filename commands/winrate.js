@@ -1,5 +1,6 @@
-const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
 const chrono = require('chrono-node');
+const { buildStatCard } = require('../modules/chart');
 
 // ─── /winrate ────────────────────────────────────────────────────────────
 // Filterable win rate query: pick a category (dino/vehicle/weapon), a
@@ -391,69 +392,60 @@ module.exports = {
         `\nMost common pickups: not available yet — needs per-MVP pickup tracking (see /testwinrate for a preview)`
       : 'No DinoWin rounds in this selection to break down.';
 
-    // ── Embed ─────────────────────────────────────────────────────────────
-    const winColor = winRatePct >= 55 ? 0x57F287 : winRatePct <= 40 ? 0xED4245 : 0xFEE75C;
-    const serverLabel = serverType === 'pro' ? 'Pro' : 'Regular';
-
-    // Significance line — one concise sentence in the description, not a field
-    let sigLine = '';
-    if (significanceNote.includes('SIGNIFICANTLY')) {
-      const direction = winRatePct < (baseline ? Math.round((baseline.wins / baseline.total) * 100) : 50) ? 'below' : 'above';
-      const baselinePct = baseline ? Math.round((baseline.wins / baseline.total) * 100) : 0;
-      sigLine = `\n↓ Significantly ${direction} baseline (p < 0.05) — all-time avg ${baselinePct}%`;
-    }
+    // ── Stat card ─────────────────────────────────────────────────────────
+    const winColorHex  = winRatePct >= 55 ? '#57F287' : winRatePct <= 40 ? '#ED4245' : '#FEE75C';
+    const serverLabel  = serverType === 'pro' ? 'Pro' : 'Regular';
 
     const baselineText = baseline && baseline.total >= 5
-      ? `${Math.round((baseline.wins / baseline.total) * 100)}%  (${baseline.total.toLocaleString()} rounds)`
+      ? `${Math.round((baseline.wins / baseline.total) * 100)}%  (${baseline.total.toLocaleString()})`
       : '—';
+
+    let noteText = '';
+    if (significanceNote.includes('SIGNIFICANTLY')) {
+      const baselinePct = baseline ? Math.round((baseline.wins / baseline.total) * 100) : 0;
+      const direction   = winRatePct < baselinePct ? 'below' : 'above';
+      noteText = `Win rate is significantly ${direction} the all-time average of ${baselinePct}% (p < 0.05)`;
+    }
 
     const coItemName  = category === 'vehicle'
       ? (topCoWeapon  ? `${topCoWeapon[0]} (${topCoWeapon[1]}x)`   : '—')
       : (topCoVehicle ? `${topCoVehicle[0]} (${topCoVehicle[1]}x)` : '—');
-    const coItemLabel = category === 'vehicle' ? 'Co-occurring Gun' : 'Co-occurring Car';
-
-    const dinoWinPairing = dinoWinRows.length > 0
+    const coItemLabel  = category === 'vehicle' ? 'Co-occurring Gun' : 'Co-occurring Car';
+    const dinoWinLabel = category === 'vehicle' ? 'DinoWin — Top Gun' : 'DinoWin — Top Car';
+    const dinoWinValue = dinoWinRows.length > 0
       ? (category === 'vehicle'
           ? (topWeapon  ? `${topWeapon[0]} (${topWeapon[1]}x)`   : '—')
           : (topVehicle ? `${topVehicle[0]} (${topVehicle[1]}x)` : '—'))
-      : null;
-    const dinoWinLabel = category === 'vehicle' ? 'DinoWin — Top Gun' : 'DinoWin — Top Car';
+      : '—';
 
-    const embed = new EmbedBuilder()
-      .setColor(winColor)
-      .setAuthor({ name: `${categoryLabel} · ${serverLabel} Servers` })
-      .setTitle(item)
-      .setDescription(
-        `**${winRatePct}%** survivor win rate  ·  ${rows.length.toLocaleString()} rounds  ·  ${periodLabel}` +
-        sigLine
-      )
-      .addFields(
-        { name: 'Win Rate', value: `${winRatePct}%`,              inline: true },
-        { name: 'Rounds',   value: rows.length.toLocaleString(),   inline: true },
-        { name: 'Baseline', value: baselineText,                   inline: true },
-        { name: 'Best Map', value: topMap ? `${topMap[0]} (${topMap[1]}x)` : '—', inline: true },
-        { name: coItemLabel, value: coItemName, inline: true },
-      );
-
-    if (dinoWinPairing) {
-      embed.addFields({ name: dinoWinLabel, value: dinoWinPairing, inline: true });
-    } else {
-      embed.addFields({ name: '\u200B', value: '\u200B', inline: true });
-    }
-
-    embed
-      .setFooter({ text: 'MVP-correlation proxy · PrimalGame' })
-      .setTimestamp();
+    const cardBuffer = await buildStatCard({
+      title:    item,
+      subtitle: `${categoryLabel} · ${serverLabel} Servers`,
+      stats: [
+        { label: 'Win Rate', value: `${winRatePct}%`,            color: winColorHex },
+        { label: 'Rounds',   value: rows.length.toLocaleString(), color: '#5865F2'   },
+        { label: 'Baseline', value: baselineText,                 color: '#72767d'   },
+      ],
+      lookback: periodLabel,
+      panels: [
+        { title: 'Best Map',   lines: [topMap ? `${topMap[0]} (${topMap[1]}x)` : '—'] },
+        { title: coItemLabel,  lines: [coItemName]   },
+        { title: dinoWinLabel, lines: [dinoWinValue] },
+      ],
+      note: noteText,
+    });
 
     // ── Attachment ────────────────────────────────────────────────────────
     const { rows: tableRows, sampled, originalCount } = capAndSample(rows);
-    const table = buildPastebinTable(tableRows);
-    const buffer = Buffer.from(table, 'utf8');
-    const attachment = new AttachmentBuilder(buffer, { name: `winrate-${item.replace(/\s+/g, '-')}-${Date.now()}.txt` });
+    const table          = buildPastebinTable(tableRows);
+    const cardAttachment = new AttachmentBuilder(cardBuffer, { name: 'winrate.png' });
+    const txtAttachment  = new AttachmentBuilder(Buffer.from(table, 'utf8'), {
+      name: `winrate-${item.replace(/\s+/g, '-')}-${Date.now()}.txt`,
+    });
 
-    const replyPayload = { embeds: [embed], files: [attachment] };
+    const replyPayload = { files: [cardAttachment, txtAttachment] };
     if (sampled) {
-      replyPayload.content = `📊 *Attachment: evenly-sampled ${tableRows.length.toLocaleString()} of ${originalCount.toLocaleString()} rounds. Win rate uses all ${originalCount.toLocaleString()} rows.*`;
+      replyPayload.content = `*Attachment: evenly-sampled ${tableRows.length.toLocaleString()} of ${originalCount.toLocaleString()} rounds — win rate calculated from all ${originalCount.toLocaleString()}.*`;
     }
     return interaction.editReply(replyPayload);
   },
