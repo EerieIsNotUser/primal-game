@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
+const { SlashCommandBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { buildLineChartImage, buildDualAxisChartImage, buildChartCard } = require('../modules/chart');
 
 const ALL_MAPS = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
@@ -206,7 +206,14 @@ module.exports = {
     const narrativeMaps = mode === 'single' ? [primaryMap] : overlayMaps;
     const narrative = generateFakeNarrative(narrativeMaps, overlayMaps);
 
-    await interaction.channel.send({ content: `*(test data)*${overlayNote}\n${narrative}`, files }).catch(err => {
+    const previewButtons = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('preview_1d').setLabel('1d').setStyle(ButtonStyle.Secondary).setDisabled(true),
+      new ButtonBuilder().setCustomId('preview_7d').setLabel('7d').setStyle(ButtonStyle.Secondary).setDisabled(true),
+      new ButtonBuilder().setCustomId('preview_14d').setLabel('14d').setStyle(ButtonStyle.Primary).setDisabled(true),
+      new ButtonBuilder().setCustomId('preview_30d').setLabel('30d').setStyle(ButtonStyle.Secondary).setDisabled(true),
+    );
+
+    await interaction.channel.send({ content: `*(test data)*${overlayNote}\n${narrative}`, files, components: [previewButtons] }).catch(err => {
       console.error('[testchart] send failed:', err.message);
     });
 
