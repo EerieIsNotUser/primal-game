@@ -418,6 +418,9 @@ module.exports = {
           : (topVehicle ? `${topVehicle[0]} (${topVehicle[1]}x)` : '—'))
       : '—';
 
+    const dinoWinCount  = dinoWinRows.length;
+    const dinoLossCount = rows.length - dinoWinRows.length;
+
     const cardBuffer = await buildStatCard({
       title:    item,
       subtitle: `${categoryLabel} · ${serverLabel} Servers`,
@@ -429,8 +432,8 @@ module.exports = {
       lookback: periodLabel,
       panels: [
         { title: 'Best Map',   lines: [topMap ? `${topMap[0]} (${topMap[1]}x)` : '—'] },
-        { title: coItemLabel,  lines: [coItemName]   },
-        { title: dinoWinLabel, lines: [dinoWinValue] },
+        { title: coItemLabel,  subtitle: `(${rows.length} rounds)`, lines: [coItemName] },
+        { title: dinoWinLabel, subtitle: `(${dinoWinCount} DinoWin)`, lines: [dinoWinValue] },
       ],
       note: noteText,
     });

@@ -380,17 +380,21 @@ module.exports = {
 
     let panels;
     if (category === 'dino') {
+      const dinoWinCount  = filtered.filter(r => r.round_result === 'DinoWin').length;
+      const dinoLossCount = filtered.filter(r => r.round_result === 'SurvivorWin').length;
       panels = [
         { title: 'Best Map', lines: [topMap ? `${topMap[0]} (${topMap[1]}x)` : '—'] },
         {
-          title: 'When Won',
-          lines: [`Car: ${breakdownData.wonCar}`, `Gun: ${breakdownData.wonGun}`, `Pickup: ${breakdownData.pickup}`],
-          color: '#57F287',
+          title:    'When Won',
+          subtitle: `(${dinoWinCount} rounds)`,
+          lines:    [`Car: ${breakdownData.wonCar}`, `Gun: ${breakdownData.wonGun}`, `Pickup: ${breakdownData.pickup}`],
+          color:    '#57F287',
         },
         {
-          title: 'When Lost',
-          lines: [`Car: ${breakdownData.lostCar}`, `Gun: ${breakdownData.lostGun}`],
-          color: '#ED4245',
+          title:    'When Lost',
+          subtitle: `(${dinoLossCount} rounds)`,
+          lines:    [`Car: ${breakdownData.lostCar}`, `Gun: ${breakdownData.lostGun}`],
+          color:    '#ED4245',
         },
       ];
     } else {

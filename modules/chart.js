@@ -608,6 +608,12 @@ async function buildStatCard({
       <text x="${textStartX}" y="${py + 26}"
             fill="#e8e9eb" font-size="18" font-weight="bold" font-family="DejaVu Sans">${escapeXml(panel.title)}</text>`;
 
+    if (panel.subtitle) {
+      panelsSvg += `
+        <text x="${textStartX + 8 + panel.title.length * 10.5}" y="${py + 26}"
+              fill="#72767d" font-size="13" font-family="DejaVu Sans">${escapeXml(panel.subtitle)}</text>`;
+    }
+
     if (panelIcon) {
       panelsSvg += `
         <text x="${px + panelWidth - 16}" y="${py + 26}"
@@ -617,11 +623,25 @@ async function buildStatCard({
 
     const isHero = panel.lines.length === 1 && !panel.lines[0].includes(': ');
     if (isHero) {
-      const heroY = py + Math.floor(PANEL_H / 2) + 16;
-      panelsSvg += `
-        <text x="${textStartX}" y="${heroY}"
-              fill="#e8e9eb" font-size="22" font-weight="bold"
-              font-family="DejaVu Sans">${escapeXml(panel.lines[0])}</text>`;
+      // Split "Name (Nx)" into name + count sub-line if pattern matches
+      const heroMatch = panel.lines[0].match(/^(.+?)\s+\((\d+.+?)\)$/);
+      if (heroMatch) {
+        const heroName  = heroMatch[1];
+        const heroCount = `(${heroMatch[2]})`;
+        const centerY   = py + Math.floor(PANEL_H / 2);
+        panelsSvg += `
+          <text x="${textStartX}" y="${centerY + 4}"
+                fill="#e8e9eb" font-size="24" font-weight="bold"
+                font-family="DejaVu Sans">${escapeXml(heroName)}</text>
+          <text x="${textStartX}" y="${centerY + 24}"
+                fill="#72767d" font-size="14"
+                font-family="DejaVu Sans">${escapeXml(heroCount)}</text>`;
+      } else {
+        panelsSvg += `
+          <text x="${textStartX}" y="${py + Math.floor(PANEL_H / 2) + 16}"
+                fill="#e8e9eb" font-size="22" font-weight="bold"
+                font-family="DejaVu Sans">${escapeXml(panel.lines[0])}</text>`;
+      }
     } else {
       panel.lines.forEach((line, li) => {
         const rowY = py + 38 + li * 30;
@@ -633,7 +653,7 @@ async function buildStatCard({
           const val      = line.slice(colonIdx + 2);
           panelsSvg += `
             <text x="${textStartX + 4}" y="${rowY + 18}"
-                  fill="#72767d" font-size="13" font-family="DejaVu Sans">${escapeXml(key)}</text>
+                  fill="#9b9ea4" font-size="13" font-family="DejaVu Sans">${escapeXml(key)}</text>
             <text x="${px + panelWidth - 16}" y="${rowY + 18}"
                   fill="#e8e9eb" font-size="15" font-weight="bold" font-family="DejaVu Sans"
                   text-anchor="end">${escapeXml(val)}</text>`;
