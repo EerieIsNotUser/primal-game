@@ -509,20 +509,20 @@ async function buildStatCard({
   const ICON_SZ       = 64;
   const ICON_X        = 14;
   const ICON_Y        = 13;
-  const BODY_PAD      = 24;
+  const BODY_PAD      = 32;
   const PANEL_GAP     = 16;
   const PANELS_PER_ROW = 3;
 
   // Panel height auto-sizes to tallest content in any panel
   const maxLines = panels.length > 0 ? Math.max(...panels.map(p => p.lines.length)) : 1;
-  const PANEL_H  = 40 + maxLines * 22;        // 1-line=62px, 2=84px, 3=106px
+  const PANEL_H  = 48 + maxLines * 26;        // 1-line=74px, 2=100px, 3=126px
   const PANEL_W  = Math.floor(
     (CARD_W - 2 * BODY_PAD - (PANELS_PER_ROW - 1) * PANEL_GAP) / PANELS_PER_ROW
   );                                           // ≈ 373px
 
   const numRows       = Math.ceil(panels.length / PANELS_PER_ROW);
   const panelsBlockH  = numRows * PANEL_H + Math.max(0, numRows - 1) * PANEL_GAP;
-  const noteBlockH    = note ? PANEL_GAP + 24 : 0;
+  const noteBlockH    = note ? PANEL_GAP + Math.max(1, Math.ceil(note.length / Math.floor((CARD_W - 2 * BODY_PAD) / 7.2))) * 20 : 0;
   const BODY_H        = BODY_PAD + panelsBlockH + noteBlockH + BODY_PAD;
 
   const CARD_H   = HEADER_H + BODY_H + FOOTER_H;
@@ -591,29 +591,42 @@ async function buildStatCard({
     panelsSvg += `<rect x="${px}" y="${py}" width="${PANEL_W}" height="${PANEL_H}" rx="8" fill="#111214"/>`;
 
     if (accent) {
-      panelsSvg += `<rect x="${px}" y="${py}" width="4" height="${PANEL_H}" rx="2" fill="${accent}"/>`;
+      panelsSvg += `<rect x="${px}" y="${py}" width="6" height="${PANEL_H}" rx="2" fill="${accent}"/>`;
     }
 
     const textStartX = px + (accent ? 20 : 16);
 
     panelsSvg += `
-      <text x="${textStartX}" y="${py + 22}"
-            fill="#b5b9bf" font-size="13" font-family="DejaVu Sans">${escapeXml(panel.title)}</text>`;
+      <text x="${textStartX}" y="${py + 24}"
+            fill="#b5b9bf" font-size="15" font-family="DejaVu Sans">${escapeXml(panel.title)}</text>`;
 
     panel.lines.forEach((line, li) => {
       panelsSvg += `
-        <text x="${textStartX}" y="${py + 44 + li * 22}"
-              fill="#e8e9eb" font-size="15" font-family="DejaVu Sans">${escapeXml(line)}</text>`;
+        <text x="${textStartX}" y="${py + 50 + li * 26}"
+              fill="#e8e9eb" font-size="18" font-family="DejaVu Sans">${escapeXml(line)}</text>`;
     });
   });
 
-  // ── Note line ─────────────────────────────────────────────────────────
+  // ── Note line (word-wrapped) ───────────────────────────────────────────
   let noteSvg = '';
   if (note) {
-    const noteY = bodyStartY + panelsBlockH + PANEL_GAP + 18;
-    noteSvg = `
-      <text x="${BODY_PAD}" y="${noteY}"
-            fill="#72767d" font-size="13" font-family="DejaVu Sans">${escapeXml(note)}</text>`;
+    const avgCharW   = 7.2;
+    const maxChars   = Math.floor((CARD_W - 2 * BODY_PAD) / avgCharW);
+    const words      = note.split(' ');
+    const noteLines  = [];
+    let   current    = '';
+    for (const word of words) {
+      const test = current ? `${current} ${word}` : word;
+      if (test.length <= maxChars) { current = test; }
+      else { if (current) noteLines.push(current); current = word; }
+    }
+    if (current) noteLines.push(current);
+
+    noteLines.forEach((line, i) => {
+      noteSvg += `
+        <text x="${BODY_PAD}" y="${bodyStartY + panelsBlockH + PANEL_GAP + 16 + i * 20}"
+              fill="#72767d" font-size="13" font-family="DejaVu Sans">${escapeXml(line)}</text>`;
+    });
   }
 
   // ── Footer ────────────────────────────────────────────────────────────
