@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
+const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const chrono = require('chrono-node');
 
 // ─── /testwinrate ────────────────────────────────────────────────────────
@@ -262,6 +262,7 @@ module.exports = {
     }
 
     let breakdown;
+    let breakdownData = {};
     if (category === 'dino') {
       const dinoWins = filtered.filter(r => r.round_result === 'DinoWin');
       const dinoLosses = filtered.filter(r => r.round_result === 'SurvivorWin');
@@ -292,6 +293,13 @@ module.exports = {
         `Most common MVP car when ${item} lost: ${topLV ? `${topLV[0]} (${topLV[1]}x)` : 'No data'}\n` +
         `Most common MVP gun when ${item} lost: ${topLW ? `${topLW[0]} (${topLW[1]}x)` : 'No data'}\n` +
         mapLine;
+      breakdownData = {
+        wonCar:  topV  ? `${topV[0]} (${topV[1]}x)`   : 'No data',
+        wonGun:  topW  ? `${topW[0]} (${topW[1]}x)`   : 'No data',
+        lostCar: topLV ? `${topLV[0]} (${topLV[1]}x)` : 'No data',
+        lostGun: topLW ? `${topLW[0]} (${topLW[1]}x)` : 'No data',
+        pickup:  topP  ? `${topP[0]} (${topP[1]}x)`   : 'No data',
+      };
     } else {
       const itemWinRounds = filtered.filter(r => r.round_result === 'DinoWin');
       const dCounts = new Map(), coCounts = new Map(), pCounts = new Map();
@@ -311,6 +319,12 @@ module.exports = {
         `Most common ${coLabel}: ${topCo ? `${topCo[0]} (${topCo[1]}x)` : 'No data'}\n` +
         `Most common pickup: ${topP ? `${topP[0]} (${topP[1]}x)` : 'No data'}\n` +
         mapLine;
+      breakdownData = {
+        topDino: topD  ? `${topD[0]} (${topD[1]}x)`   : 'No data',
+        coItem:  topCo ? `${topCo[0]} (${topCo[1]}x)` : 'No data',
+        coLabel: category === 'vehicle' ? 'Co-occurring Gun' : 'Co-occurring Car',
+        pickup:  topP  ? `${topP[0]} (${topP[1]}x)`   : 'No data',
+      };
     }
 
     // Generate a comparable "previous period" batch for the same item to
@@ -355,25 +369,61 @@ module.exports = {
 
     const resultFilterLabel = resultFilter ? ` · ${resultFilter === 'DinoWin' ? 'Dino Wins only' : 'Survivor Wins only'}` : '';
 
-    const summary =
-      `*(test data)* **${item} (${categoryLabel}) won ${winRate}% for your selected dates**\n` +
-      `${periodLabel} · ${filtered.length} round${filtered.length !== 1 ? 's' : ''} generated${resultFilterLabel}` +
-      changesSummary +
-      `\n\n${breakdown}`;
+    // ── Embed ─────────────────────────────────────────────────────────────
+    const winColor = winRate >= 55 ? 0x57F287 : winRate <= 40 ? 0xED4245 : 0xFEE75C;
+    const serverLabel = serverType === 'pro' ? 'Pro' : 'Regular';
+    const categoryIcon = category === 'dino' ? '🦕' : category === 'vehicle' ? '🚗' : '🔫';
 
+    const embed = new EmbedBuilder()
+      .setColor(winColor)
+      .setAuthor({ name: `*(test)* ${categoryIcon} ${categoryLabel} · ${serverLabel} · ${gameMode}` })
+      .setTitle(item)
+      .setDescription(`${periodLabel} · ${filtered.length.toLocaleString()} round${filtered.length !== 1 ? 's' : ''} generated${resultFilterLabel}`)
+      .addFields(
+        { name: 'Win Rate',        value: `**${winRate}%**`, inline: true },
+        { name: 'Rounds',          value: filtered.length.toLocaleString(), inline: true },
+        { name: 'vs Prior Period', value: `${baselineRate}% (${baseline.length} rounds)`, inline: true },
+      );
+
+    if (changeLines.length > 0) {
+      embed.addFields({ name: '⚠️ Significant Changes', value: changeLines.join('\n') });
+    }
+
+    embed.addFields({ name: '🗺️ Most Common Map', value: topMap ? `${topMap[0]} (${topMap[1]}x)` : 'No data', inline: true });
+
+    if (category === 'dino') {
+      embed.addFields(
+        { name: '✅ Won — Car',  value: breakdownData.wonCar,  inline: true },
+        { name: '✅ Won — Gun',  value: breakdownData.wonGun,  inline: true },
+        { name: '❌ Lost — Car', value: breakdownData.lostCar, inline: true },
+        { name: '❌ Lost — Gun', value: breakdownData.lostGun, inline: true },
+        { name: '📦 Pickup',     value: breakdownData.pickup,  inline: true },
+      );
+    } else {
+      embed.addFields(
+        { name: '🦕 Winning Dino',             value: breakdownData.topDino, inline: true },
+        { name: `🔗 ${breakdownData.coLabel}`, value: breakdownData.coItem,  inline: true },
+        { name: '📦 Pickup',                   value: breakdownData.pickup,  inline: true },
+      );
+    }
+
+    embed.setFooter({ text: 'Synthetic test data · PrimalGame' });
+
+    // ── Attachment ────────────────────────────────────────────────────────
     const { rows: tableRows, sampled, originalCount } = capAndSample(filtered);
     const table = buildPastebinTable(tableRows, category === 'dino');
     const buffer = Buffer.from(table, 'utf8');
     const attachment = new AttachmentBuilder(buffer, { name: `test-winrate-${item.replace(/\s+/g, '-')}-${Date.now()}.txt` });
 
-    const finalSummary = sampled
-      ? `${summary}\n\n📊 *Attachment shows an evenly-sampled ${tableRows.length} of ${originalCount} total matching rounds (file size cap). The ${winRate}% win rate above is calculated from all ${originalCount} rounds, not just the sample.*`
-      : summary;
+    const replyPayload = { embeds: [embed], files: [attachment] };
+    if (sampled) {
+      replyPayload.content = `📊 *Attachment: evenly-sampled ${tableRows.length.toLocaleString()} of ${originalCount.toLocaleString()} rounds. Win rate uses all ${originalCount.toLocaleString()} rows.*`;
+    }
 
-    await interaction.channel.send({ content: finalSummary, files: [attachment] }).catch(err => {
+    await interaction.channel.send(replyPayload).catch(err => {
       console.error('[testwinrate] send failed:', err.message);
     });
 
-    return interaction.editReply('Posted test winrate query above.');
+    return interaction.editReply('Posted test winrate embed above.');
   },
 };

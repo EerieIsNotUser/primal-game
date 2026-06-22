@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
+const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const chrono = require('chrono-node');
 
 // ─── /winrate ────────────────────────────────────────────────────────────
@@ -391,22 +391,61 @@ module.exports = {
         `\nMost common pickups: not available yet — needs per-MVP pickup tracking (see /testwinrate for a preview)`
       : 'No DinoWin rounds in this selection to break down.';
 
-    const summary =
-      `**${item} (${categoryLabel}) won ${winRatePct}% for your selected dates**\n` +
-      `${periodLabel} · ${modeLabel} servers · ${rows.length} round${rows.length !== 1 ? 's' : ''}` +
-      significanceNote +
-      `\n\n*(MVP-correlation proxy — not true per-item usage win rate, see /winrate caveats)*\n\n` +
-      mvpBreakdown;
+    // ── Embed ─────────────────────────────────────────────────────────────
+    const winColor = winRatePct >= 55 ? 0x57F287 : winRatePct <= 40 ? 0xED4245 : 0xFEE75C;
+    const serverLabel = serverType === 'pro' ? 'Pro' : 'Regular';
+    const categoryIcon = category === 'vehicle' ? '🚗' : '🔫';
 
+    const embed = new EmbedBuilder()
+      .setColor(winColor)
+      .setAuthor({ name: `${categoryIcon} ${categoryLabel} · ${serverLabel} Servers` })
+      .setTitle(item)
+      .setDescription(`${periodLabel} · ${rows.length.toLocaleString()} round${rows.length !== 1 ? 's' : ''}`)
+      .addFields(
+        { name: 'Win Rate',  value: `**${winRatePct}%**`, inline: true },
+        { name: 'Rounds',    value: rows.length.toLocaleString(), inline: true },
+        { name: 'Baseline',  value: baseline && baseline.total >= 5
+            ? `${Math.round((baseline.wins / baseline.total) * 100)}% (${baseline.total} rounds)`
+            : 'Insufficient data', inline: true },
+      );
+
+    if (significanceNote.trim()) {
+      embed.addFields({
+        name: significanceNote.includes('SIGNIFICANTLY') ? '⚠️ Statistical Alert' : 'ℹ️ Baseline Note',
+        value: significanceNote.replace(/^\n+/, '').trim().slice(0, 1024),
+      });
+    }
+
+    embed.addFields(
+      { name: '🗺️ Most Common Map', value: topMap ? `${topMap[0]} (${topMap[1]}x)` : 'No data', inline: true },
+      {
+        name: category === 'vehicle' ? '🔗 Co-occurring Gun' : '🔗 Co-occurring Car',
+        value: category === 'vehicle'
+          ? (topCoWeapon ? `${topCoWeapon[0]} (${topCoWeapon[1]}x)` : 'No data')
+          : (topCoVehicle ? `${topCoVehicle[0]} (${topCoVehicle[1]}x)` : 'No data'),
+        inline: true,
+      },
+    );
+
+    if (dinoWinRows.length > 0) {
+      const dinoWinField = category === 'vehicle'
+        ? { name: '🦕 DinoWin — Top Gun', value: topWeapon ? `${topWeapon[0]} (${topWeapon[1]}x)` : 'No data' }
+        : { name: '🦕 DinoWin — Top Car', value: topVehicle ? `${topVehicle[0]} (${topVehicle[1]}x)` : 'No data' };
+      embed.addFields(dinoWinField);
+    }
+
+    embed.setFooter({ text: 'MVP-correlation proxy — not true per-item win rate · PrimalGame' });
+
+    // ── Attachment ────────────────────────────────────────────────────────
     const { rows: tableRows, sampled, originalCount } = capAndSample(rows);
     const table = buildPastebinTable(tableRows);
     const buffer = Buffer.from(table, 'utf8');
     const attachment = new AttachmentBuilder(buffer, { name: `winrate-${item.replace(/\s+/g, '-')}-${Date.now()}.txt` });
 
-    const finalSummary = sampled
-      ? `${summary}\n\n📊 *Attachment shows an evenly-sampled ${tableRows.length} of ${originalCount} total matching rounds (file size cap). The ${winRatePct}% win rate above is calculated from all ${originalCount} rounds, not just the sample.*`
-      : summary;
-
-    return interaction.editReply({ content: finalSummary, files: [attachment] });
+    const replyPayload = { embeds: [embed], files: [attachment] };
+    if (sampled) {
+      replyPayload.content = `📊 *Attachment: evenly-sampled ${tableRows.length.toLocaleString()} of ${originalCount.toLocaleString()} rounds. Win rate uses all ${originalCount.toLocaleString()} rows.*`;
+    }
+    return interaction.editReply(replyPayload);
   },
 };
