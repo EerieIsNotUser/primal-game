@@ -506,16 +506,16 @@ async function buildStatCard({
   const HEADER_H      = 90;
   const FOOTER_H      = 40;
   const CORNER_R      = 14;
-  const ICON_SZ       = 64;
+  const ICON_SZ       = 48;
   const ICON_X        = 14;
-  const ICON_Y        = 13;
+  const ICON_Y        = 21;
   const BODY_PAD      = 32;
   const PANEL_GAP     = 16;
   const PANELS_PER_ROW = 2;
 
   // Panel height auto-sizes to tallest content in any panel
   const maxLines = panels.length > 0 ? Math.max(...panels.map(p => p.lines.length)) : 1;
-  const PANEL_H  = 48 + maxLines * 26;        // 1-line=74px, 2=100px, 3=126px
+  const PANEL_H  = 48 + maxLines * 30;        // 1-line=78px, 2=108px, 3=138px
   const PANEL_W  = Math.floor(
     (CARD_W - 2 * BODY_PAD - (PANELS_PER_ROW - 1) * PANEL_GAP) / PANELS_PER_ROW
   );                                           // ≈ 373px
@@ -561,8 +561,8 @@ async function buildStatCard({
       <circle cx="${bx + 16}" cy="${BOX_Y + 20}" r="4.5" fill="${col}"/>
       <text x="${bx + 28}" y="${BOX_Y + 24}"
             fill="#b5b9bf" font-size="13" font-family="DejaVu Sans">${escapeXml(s.label)}</text>
-      <text x="${bx + 14}" y="${BOX_Y + 50}"
-            fill="#e8e9eb" font-size="20" font-weight="bold"
+      <text x="${bx + 14}" y="${BOX_Y + 55}"
+            fill="${col}" font-size="28" font-weight="bold"
             font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
   });
 
@@ -582,13 +582,15 @@ async function buildStatCard({
   let panelsSvg    = '';
 
   panels.forEach((panel, i) => {
-    const row    = Math.floor(i / PANELS_PER_ROW);
-    const col    = i % PANELS_PER_ROW;
-    const px     = BODY_PAD + col * (PANEL_W + PANEL_GAP);
-    const py     = bodyStartY + row * (PANEL_H + PANEL_GAP);
-    const accent = panel.color || null;
+    const row        = Math.floor(i / PANELS_PER_ROW);
+    const col        = i % PANELS_PER_ROW;
+    const isOrphan   = panels.length % PANELS_PER_ROW !== 0 && i === panels.length - 1;
+    const panelWidth = isOrphan ? CARD_W - 2 * BODY_PAD : PANEL_W;
+    const px         = BODY_PAD + col * (PANEL_W + PANEL_GAP);
+    const py         = bodyStartY + row * (PANEL_H + PANEL_GAP);
+    const accent     = panel.color || null;
 
-    panelsSvg += `<rect x="${px}" y="${py}" width="${PANEL_W}" height="${PANEL_H}" rx="8" fill="#111214"/>`;
+    panelsSvg += `<rect x="${px}" y="${py}" width="${panelWidth}" height="${PANEL_H}" rx="8" fill="#2b2d31" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
 
     if (accent) {
       panelsSvg += `<rect x="${px}" y="${py}" width="6" height="${PANEL_H}" rx="2" fill="${accent}"/>`;
@@ -596,15 +598,52 @@ async function buildStatCard({
 
     const textStartX = px + (accent ? 20 : 16);
 
-    panelsSvg += `
-      <text x="${textStartX}" y="${py + 24}"
-            fill="#b5b9bf" font-size="15" font-family="DejaVu Sans">${escapeXml(panel.title)}</text>`;
+    const panelIcon = panel.title.toLowerCase().includes('won') ? '▲'
+      : panel.title.toLowerCase().includes('lost') ? '▼'
+      : panel.title.toLowerCase().includes('map') ? '◎'
+      : panel.title.toLowerCase().includes('dino') ? '◈'
+      : null;
 
-    panel.lines.forEach((line, li) => {
+    panelsSvg += `
+      <text x="${textStartX}" y="${py + 26}"
+            fill="#e8e9eb" font-size="18" font-weight="bold" font-family="DejaVu Sans">${escapeXml(panel.title)}</text>`;
+
+    if (panelIcon) {
       panelsSvg += `
-        <text x="${textStartX}" y="${py + 50 + li * 26}"
-              fill="#e8e9eb" font-size="18" font-family="DejaVu Sans">${escapeXml(line)}</text>`;
-    });
+        <text x="${px + panelWidth - 16}" y="${py + 26}"
+              fill="#72767d" font-size="14" font-family="DejaVu Sans"
+              text-anchor="end">${escapeXml(panelIcon)}</text>`;
+    }
+
+    const isHero = panel.lines.length === 1 && !panel.lines[0].includes(': ');
+    if (isHero) {
+      const heroY = py + Math.floor(PANEL_H / 2) + 16;
+      panelsSvg += `
+        <text x="${textStartX}" y="${heroY}"
+              fill="#e8e9eb" font-size="22" font-weight="bold"
+              font-family="DejaVu Sans">${escapeXml(panel.lines[0])}</text>`;
+    } else {
+      panel.lines.forEach((line, li) => {
+        const rowY = py + 38 + li * 30;
+        const rowH = 26;
+        panelsSvg += `<rect x="${px + 8}" y="${rowY}" width="${panelWidth - 16}" height="${rowH}" rx="5" fill="#111214"/>`;
+        if (line.includes(': ')) {
+          const colonIdx = line.indexOf(': ');
+          const key      = line.slice(0, colonIdx);
+          const val      = line.slice(colonIdx + 2);
+          panelsSvg += `
+            <text x="${textStartX + 4}" y="${rowY + 18}"
+                  fill="#72767d" font-size="13" font-family="DejaVu Sans">${escapeXml(key)}</text>
+            <text x="${px + panelWidth - 16}" y="${rowY + 18}"
+                  fill="#e8e9eb" font-size="15" font-weight="bold" font-family="DejaVu Sans"
+                  text-anchor="end">${escapeXml(val)}</text>`;
+        } else {
+          panelsSvg += `
+            <text x="${textStartX + 4}" y="${rowY + 18}"
+                  fill="#e8e9eb" font-size="15" font-family="DejaVu Sans">${escapeXml(line)}</text>`;
+        }
+      });
+    }
   });
 
   // ── Note line (word-wrapped) ───────────────────────────────────────────
@@ -636,16 +675,18 @@ async function buildStatCard({
              font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>`
     : '';
   const footerRight = `
-    <circle cx="${CARD_W - 98}" cy="${FOOTER_Y + 20}" r="5" fill="#5865F2"/>
-    <text x="${CARD_W - 88}" y="${ftY}" fill="#72767d" font-size="13"
+    <rect x="${CARD_W - 118}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
+    <text x="${CARD_W - 104}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="middle">PG</text>
+    <text x="${CARD_W - 84}" y="${ftY}" fill="#72767d" font-size="13"
           font-family="DejaVu Sans">PrimalGame</text>`;
 
   // ── Card SVG ──────────────────────────────────────────────────────────
   const cardSvg = `
 <svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
-  <rect width="${CARD_W}" height="${HEADER_H}" fill="#232428"/>
-  <rect y="${HEADER_H}" width="${CARD_W}" height="${BODY_H}" fill="#2b2d31"/>
-  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#1e1f22"/>
+  <rect width="${CARD_W}" height="${HEADER_H}" fill="#1e2024"/>
+  <rect y="${HEADER_H}" width="${CARD_W}" height="${BODY_H}" fill="#15171a"/>
+  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#0e0f11"/>
   <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}"
         stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
   <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}"
