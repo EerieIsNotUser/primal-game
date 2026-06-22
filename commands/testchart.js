@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
-const { buildLineChartImage, buildDualAxisChartImage } = require('../modules/chart');
+const { buildLineChartImage, buildDualAxisChartImage, buildChartCard } = require('../modules/chart');
 
 const ALL_MAPS = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
 
@@ -132,7 +132,16 @@ module.exports = {
 
     if (mode === 'single' || mode === 'all') {
       const data = generateSeries(days, MAP_PROFILES[primaryMap]);
-      const buffer = await buildLineChartImage(labels, [{ label: primaryMap, data }], `${primaryMap} — Rounds Played (Past 14 Days)`);
+      const chartBuffer = await buildLineChartImage(labels, [{ label: primaryMap, data }], null);
+      const buffer = await buildChartCard(chartBuffer, {
+        title: `${primaryMap} — Rounds Played`,
+        subtitle: `Primal Pursuit · Past ${days} Days`,
+        stats: [
+          { label: 'Total Rounds', value: data.reduce((a, b) => a + b, 0).toLocaleString(), color: '#5865F2' },
+          { label: 'Maps', value: '1', color: '#57F287' },
+        ],
+        lookback: `Past ${days} Days`,
+      });
       files.push(new AttachmentBuilder(buffer, { name: 'testchart-single.png' }));
     }
 
@@ -141,14 +150,21 @@ module.exports = {
         label: map,
         data: generateSeries(days, MAP_PROFILES[map]),
       }));
-      const buffer = await buildLineChartImage(labels, series, 'Map Popularity — Past 14 Days');
+      const totalRounds = series.flatMap(s => s.data).reduce((a, b) => a + b, 0);
+      const chartBuffer = await buildLineChartImage(labels, series, null);
+      const buffer = await buildChartCard(chartBuffer, {
+        title: 'Map Popularity',
+        subtitle: `Primal Pursuit · Past ${days} Days`,
+        stats: [
+          { label: 'Total Rounds', value: totalRounds.toLocaleString(), color: '#5865F2' },
+          { label: 'Maps', value: series.length.toString(), color: '#57F287' },
+        ],
+        lookback: `Past ${days} Days`,
+      });
       files.push(new AttachmentBuilder(buffer, { name: 'testchart-overlay.png' }));
     }
 
     if (mode === 'dual' || mode === 'all') {
-      // Dual mode uses the SAME map selection as overlay mode (primary +
-      // map2/3/4, or all 4 if none specified) — every selected map gets
-      // its own line on the right axis, bars show the combined total.
       const dualMapsData = {};
       overlayMaps.forEach(map => {
         dualMapsData[map] = generateSeries(days, MAP_PROFILES[map]);
@@ -159,15 +175,25 @@ module.exports = {
       );
 
       const lineSeries = overlayMaps.map(map => ({ label: map, data: dualMapsData[map] }));
+      const totalRounds = totalPerDay.reduce((a, b) => a + b, 0);
 
       const dualTitle = overlayMaps.length === 1
-        ? `${overlayMaps[0]} — Map Popularity vs Total Rounds`
-        : `Map Popularity vs Total Rounds (${overlayMaps.length} maps)`;
+        ? `${overlayMaps[0]} — Popularity vs Total Rounds`
+        : `Map Popularity vs Total Rounds`;
 
-      const buffer = await buildDualAxisChartImage(
+      const chartBuffer = await buildDualAxisChartImage(
         labels, totalPerDay, 'Total Rounds Played (All Maps)',
-        lineSeries, dualTitle
+        lineSeries, null
       );
+      const buffer = await buildChartCard(chartBuffer, {
+        title: dualTitle,
+        subtitle: `Primal Pursuit · Past ${days} Days`,
+        stats: [
+          { label: 'Total Rounds', value: totalRounds.toLocaleString(), color: '#5865F2' },
+          { label: 'Maps', value: overlayMaps.length.toString(), color: '#57F287' },
+        ],
+        lookback: `Past ${days} Days`,
+      });
       files.push(new AttachmentBuilder(buffer, { name: 'testchart-dual.png' }));
     }
 
