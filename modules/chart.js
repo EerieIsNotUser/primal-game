@@ -344,4 +344,138 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
-module.exports = { buildLineChartImage, buildDualAxisChartImage, bucketRoundsByMap, PALETTE };
+/**
+ * Wrap a chart PNG buffer in a Statbot-style branded card.
+ *
+ * Card anatomy  (top → bottom):
+ *   Header  90px — game icon + title/subtitle + stat callout boxes
+ *   Chart  auto  — chartBuffer composited here (typically 600px)
+ *   Footer  40px — lookback period (left)  +  PrimalGame branding (right)
+ *
+ * Icon loaded from modules/assets/icon.png — text-only header if missing.
+ *
+ * @param {Buffer} chartBuffer  PNG from buildLineChartImage / buildDualAxisChartImage
+ * @param {object} opts
+ *   title    {string}  bold header title
+ *   subtitle {string}  smaller subheading  e.g. "Primal Pursuit · Maps"
+ *   stats    {Array}   up to 3 × { label, value, color? } callout boxes
+ *   lookback {string}  footer left text  e.g. "Past 14 Days"
+ * @returns {Promise<Buffer>} RGBA PNG with rounded corners
+ */
+async function buildChartCard(chartBuffer, {
+  title    = '',
+  subtitle = '',
+  stats    = [],
+  lookback = '',
+} = {}) {
+  const CARD_W   = 1200;
+  const HEADER_H = 90;
+  const FOOTER_H = 40;
+  const CORNER_R = 14;
+  const ICON_SZ  = 64;
+  const ICON_X   = 14;
+  const ICON_Y   = 13;
+
+  const { height: CHART_H } = await sharp(chartBuffer).metadata();
+  const CARD_H   = HEADER_H + CHART_H + FOOTER_H;
+  const FOOTER_Y = HEADER_H + CHART_H;
+
+  // ── Icon: load → resize → round corners ─────────────────────────────────
+  let iconBuffer = null;
+  try {
+    const raw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
+      .resize(ICON_SZ, ICON_SZ, { fit: 'cover' })
+      .png()
+      .toBuffer();
+    const iconMask = await sharp(Buffer.from(
+      `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">` +
+      `<rect width="${ICON_SZ}" height="${ICON_SZ}" rx="10" fill="white"/></svg>`
+    )).png().toBuffer();
+    iconBuffer = await sharp(raw)
+      .composite([{ input: iconMask, blend: 'dest-in' }])
+      .png()
+      .toBuffer();
+  } catch (_) { /* icon.png missing — text-only header */ }
+
+  // ── Stat callout boxes (right side of header) ────────────────────────────
+  const BOX_W   = 160;
+  const BOX_H   = 62;
+  const BOX_GAP = 10;
+  const BOX_Y   = Math.round((HEADER_H - BOX_H) / 2);
+  const capped  = stats.slice(0, 3);
+  const totalBW = capped.length * BOX_W + Math.max(0, capped.length - 1) * BOX_GAP;
+  let statBoxesSvg = '';
+  capped.forEach((s, i) => {
+    const bx  = CARD_W - 14 - totalBW + i * (BOX_W + BOX_GAP);
+    const col = s.color || '#5865F2';
+    statBoxesSvg += `
+      <rect x="${bx}" y="${BOX_Y}" width="${BOX_W}" height="${BOX_H}" rx="6" fill="#111214"/>
+      <circle cx="${bx + 16}" cy="${BOX_Y + 20}" r="4.5" fill="${col}"/>
+      <text x="${bx + 28}" y="${BOX_Y + 24}"
+            fill="#b5b9bf" font-size="13" font-family="DejaVu Sans">${escapeXml(s.label)}</text>
+      <text x="${bx + 14}" y="${BOX_Y + 50}"
+            fill="#e8e9eb" font-size="20" font-weight="bold"
+            font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
+  });
+
+  // ── Header text ──────────────────────────────────────────────────────────
+  const textX      = iconBuffer ? ICON_X + ICON_SZ + 14 : 20;
+  const titleEl    = title
+    ? `<text x="${textX}" y="42" fill="#e8e9eb" font-size="20" font-weight="bold"
+             font-family="DejaVu Sans">${escapeXml(title)}</text>`
+    : '';
+  const subtitleEl = subtitle
+    ? `<text x="${textX}" y="63" fill="#b5b9bf" font-size="14"
+             font-family="DejaVu Sans">${escapeXml(subtitle)}</text>`
+    : '';
+
+  // ── Footer ───────────────────────────────────────────────────────────────
+  const ftY        = FOOTER_Y + 26;
+  const footerLeft = lookback
+    ? `<text x="20" y="${ftY}" fill="#72767d" font-size="13"
+             font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>`
+    : '';
+  const footerRight = `
+    <circle cx="${CARD_W - 98}" cy="${FOOTER_Y + 20}" r="5" fill="#5865F2"/>
+    <text x="${CARD_W - 88}" y="${ftY}" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans">PrimalGame</text>`;
+
+  // ── Card SVG skeleton ────────────────────────────────────────────────────
+  const cardSvg = `
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${HEADER_H}" fill="#232428"/>
+  <rect y="${HEADER_H}" width="${CARD_W}" height="${CHART_H}" fill="#2b2d31"/>
+  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#1e1f22"/>
+  <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}"
+        stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}"
+        stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  ${statBoxesSvg}
+  ${titleEl}
+  ${subtitleEl}
+  ${footerLeft}
+  ${footerRight}
+</svg>`;
+
+  // ── Composite skeleton + chart + icon ────────────────────────────────────
+  const composites = [{ input: chartBuffer, top: HEADER_H, left: 0 }];
+  if (iconBuffer) composites.push({ input: iconBuffer, top: ICON_Y, left: ICON_X });
+
+  const flat = await sharp(Buffer.from(cardSvg))
+    .composite(composites)
+    .png()
+    .toBuffer();
+
+  // ── Rounded corners via dest-in mask ─────────────────────────────────────
+  const maskBuffer = await sharp(Buffer.from(`
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${CARD_H}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
+</svg>`)).png().toBuffer();
+
+  return sharp(flat)
+    .composite([{ input: maskBuffer, blend: 'dest-in' }])
+    .png()
+    .toBuffer();
+}
+
+module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, bucketRoundsByMap, PALETTE };

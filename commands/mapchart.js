@@ -2,9 +2,11 @@ const {
   SlashCommandBuilder,
   AttachmentBuilder,
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   StringSelectMenuBuilder,
 } = require('discord.js');
-const { buildLineChartImage, buildDualAxisChartImage, bucketRoundsByMap } = require('../modules/chart');
+const { buildLineChartImage, buildDualAxisChartImage, buildChartCard, bucketRoundsByMap } = require('../modules/chart');
 
 // ─── /mapchart ───────────────────────────────────────────────────────────
 // Two chart types, switchable via dropdown:
@@ -26,6 +28,27 @@ const MONTH_RANGES = [
   { label: 'Past 6 Months', value: '6' },
   { label: 'Past 12 Months', value: '12' },
 ];
+
+function buildDaysButtonRow(activeDays) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('mapchart_days_1')
+      .setLabel('1d')
+      .setStyle(activeDays === 1 ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('mapchart_days_7')
+      .setLabel('7d')
+      .setStyle(activeDays === 7 ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('mapchart_days_14')
+      .setLabel('14d')
+      .setStyle(activeDays === 14 ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('mapchart_days_30')
+      .setLabel('30d')
+      .setStyle(activeDays === 30 ? ButtonStyle.Primary : ButtonStyle.Secondary),
+  );
+}
 
 // In-memory session store for the multi-step component flow, keyed by
 // the original interaction's message ID. Cleared after 5 minutes.
@@ -213,31 +236,44 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
 
   const baselineRows = await getSixMonthBaseline(supabase);
 
-  let buffer;
+  let chartBuffer;
   let mapsShown;
+  let cardTitle;
   if (mapFilter) {
-    // Single map: dual-axis — grey bars = total rounds across ALL maps that
-    // day, colored line = this specific map's rounds that day.
     const mapSeries = series.find(s => s.label.toLowerCase() === mapFilter.toLowerCase());
     if (!mapSeries) return interaction.editReply(`No data found for map "${mapFilter}".`);
 
     mapsShown = [mapSeries.label];
     const totalPerDay = labels.map((_, i) => series.reduce((sum, s) => sum + (s.data[i] || 0), 0));
-    buffer = await buildDualAxisChartImage(
+    chartBuffer = await buildDualAxisChartImage(
       labels, totalPerDay, 'Total Rounds Played (All Maps)',
       [{ label: mapSeries.label, data: mapSeries.data }],
-      `${mapSeries.label} — Map Popularity vs Total Rounds`
+      null
     );
+    cardTitle = `${mapSeries.label} — Popularity vs Total Rounds`;
   } else {
     mapsShown = series.map(s => s.label);
-    buffer = await buildLineChartImage(labels, series, `Map Popularity — Past ${days} Days`);
+    chartBuffer = await buildLineChartImage(labels, series, null);
+    cardTitle = 'Map Popularity';
   }
+
+  const buffer = await buildChartCard(chartBuffer, {
+    title: cardTitle,
+    subtitle: `Primal Pursuit · Past ${days} Days`,
+    stats: [
+      { label: 'Total Rounds', value: rows.length.toLocaleString(), color: '#5865F2' },
+      { label: 'Maps', value: mapsShown.length.toString(), color: '#57F287' },
+    ],
+    lookback: `Past ${days} Days`,
+  });
 
   const narrative = buildChartNarrative(rows, baselineRows, mapsShown);
   const attachment = new AttachmentBuilder(buffer, { name: 'mapchart.png' });
-  const content = `\`${rows.length} rounds · all servers\`\n${narrative}`;
+  const content = narrative
+    ? `\`${rows.length} rounds · all servers\`\n${narrative}`
+    : `\`${rows.length} rounds · all servers\``;
 
-  return interaction.editReply({ content, files: [attachment], components: [buildTypeSelectRow()] });
+  return interaction.editReply({ content, files: [attachment], components: [buildDaysButtonRow(days), buildTypeSelectRow()] });
 }
 
 async function renderWinRateOverTime(interaction, supabase, category, item, months) {
@@ -264,7 +300,15 @@ async function renderWinRateOverTime(interaction, supabase, category, item, mont
   }
 
   const { labels, data } = bucketWinRateByMonth(rows, months);
-  const buffer = await buildLineChartImage(labels, [{ label: `${item} Win Rate`, data }], `${item} — Win Rate Over Time`);
+  const chartBuffer = await buildLineChartImage(labels, [{ label: `${item} Win Rate`, data }], null);
+  const buffer = await buildChartCard(chartBuffer, {
+    title: `${item} — Win Rate Over Time`,
+    subtitle: `Primal Pursuit · ${category === 'vehicle' ? 'Vehicle' : 'Weapon'} · Past ${months} Month${months > 1 ? 's' : ''}`,
+    stats: [
+      { label: 'Rounds Sampled', value: rows.length.toLocaleString(), color: '#5865F2' },
+    ],
+    lookback: `Past ${months} Month${months > 1 ? 's' : ''}`,
+  });
   const attachment = new AttachmentBuilder(buffer, { name: 'winratechart.png' });
 
   return interaction.editReply({ content: `\`${rows.length} rounds · MVP-correlation proxy\``, files: [attachment], components: [buildTypeSelectRow()] });
@@ -301,6 +345,14 @@ module.exports = {
   // Component interaction handler — registered separately in bot.js
   async handleComponent(interaction, { supabase }) {
     const session = sessions.get(interaction.message.id) ?? { supabase, days: 14 };
+
+    if (interaction.customId.startsWith('mapchart_days_')) {
+      const days = parseInt(interaction.customId.replace('mapchart_days_', ''), 10);
+      session.days = days;
+      setSession(interaction.message.id, session);
+      await interaction.deferUpdate();
+      return renderMapPopularity(interaction, supabase, days, session.mapFilter ?? null);
+    }
 
     if (interaction.customId === 'mapchart_type_select') {
       const type = interaction.values[0];
