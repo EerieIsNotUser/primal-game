@@ -502,7 +502,7 @@ async function buildStatCard({
   panels   = [],
   note     = '',
 } = {}) {
-  const CARD_W        = 1200;
+  const CARD_W        = 900;
   const HEADER_H      = 90;
   const FOOTER_H      = 40;
   const CORNER_R      = 14;
@@ -511,7 +511,7 @@ async function buildStatCard({
   const ICON_Y        = 13;
   const BODY_PAD      = 32;
   const PANEL_GAP     = 16;
-  const PANELS_PER_ROW = 3;
+  const PANELS_PER_ROW = 2;
 
   // Panel height auto-sizes to tallest content in any panel
   const maxLines = panels.length > 0 ? Math.max(...panels.map(p => p.lines.length)) : 1;
