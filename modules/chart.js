@@ -478,4 +478,191 @@ async function buildChartCard(chartBuffer, {
     .toBuffer();
 }
 
-module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, bucketRoundsByMap, PALETTE };
+/**
+ * Render a branded data panel card (no chart — pure stats grid).
+ *
+ * Same header/footer structure as buildChartCard. The body is a
+ * grid of dark rounded panels, auto-sized to content.
+ *
+ * @param {object} opts
+ *   title    {string}   header title (item name)
+ *   subtitle {string}   header subtitle (category · server)
+ *   stats    {Array}    up to 3 × { label, value, color? } — header callout boxes
+ *   lookback {string}   footer left text
+ *   panels   {Array}    body panels × { title, lines: string[], color?: hex }
+ *                       color adds a left accent bar (e.g. green=won, red=lost)
+ *   note     {string}   optional muted note below panels (significance, caveats)
+ * @returns {Promise<Buffer>} RGBA PNG with rounded corners
+ */
+async function buildStatCard({
+  title    = '',
+  subtitle = '',
+  stats    = [],
+  lookback = '',
+  panels   = [],
+  note     = '',
+} = {}) {
+  const CARD_W        = 1200;
+  const HEADER_H      = 90;
+  const FOOTER_H      = 40;
+  const CORNER_R      = 14;
+  const ICON_SZ       = 64;
+  const ICON_X        = 14;
+  const ICON_Y        = 13;
+  const BODY_PAD      = 24;
+  const PANEL_GAP     = 16;
+  const PANELS_PER_ROW = 3;
+
+  // Panel height auto-sizes to tallest content in any panel
+  const maxLines = panels.length > 0 ? Math.max(...panels.map(p => p.lines.length)) : 1;
+  const PANEL_H  = 40 + maxLines * 22;        // 1-line=62px, 2=84px, 3=106px
+  const PANEL_W  = Math.floor(
+    (CARD_W - 2 * BODY_PAD - (PANELS_PER_ROW - 1) * PANEL_GAP) / PANELS_PER_ROW
+  );                                           // ≈ 373px
+
+  const numRows       = Math.ceil(panels.length / PANELS_PER_ROW);
+  const panelsBlockH  = numRows * PANEL_H + Math.max(0, numRows - 1) * PANEL_GAP;
+  const noteBlockH    = note ? PANEL_GAP + 24 : 0;
+  const BODY_H        = BODY_PAD + panelsBlockH + noteBlockH + BODY_PAD;
+
+  const CARD_H   = HEADER_H + BODY_H + FOOTER_H;
+  const FOOTER_Y = HEADER_H + BODY_H;
+
+  // ── Icon ─────────────────────────────────────────────────────────────
+  let iconBuffer = null;
+  try {
+    const raw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
+      .resize(ICON_SZ, ICON_SZ, { fit: 'cover' })
+      .png()
+      .toBuffer();
+    const iconMask = await sharp(Buffer.from(
+      `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">` +
+      `<rect width="${ICON_SZ}" height="${ICON_SZ}" rx="10" fill="white"/></svg>`
+    )).png().toBuffer();
+    iconBuffer = await sharp(raw)
+      .composite([{ input: iconMask, blend: 'dest-in' }])
+      .png()
+      .toBuffer();
+  } catch (_) {}
+
+  // ── Header stat boxes ────────────────────────────────────────────────
+  const BOX_W   = 160;
+  const BOX_H   = 62;
+  const BOX_GAP = 10;
+  const BOX_Y   = Math.round((HEADER_H - BOX_H) / 2);
+  const capped  = stats.slice(0, 3);
+  const totalBW = capped.length * BOX_W + Math.max(0, capped.length - 1) * BOX_GAP;
+  let statBoxesSvg = '';
+  capped.forEach((s, i) => {
+    const bx  = CARD_W - 14 - totalBW + i * (BOX_W + BOX_GAP);
+    const col = s.color || '#5865F2';
+    statBoxesSvg += `
+      <rect x="${bx}" y="${BOX_Y}" width="${BOX_W}" height="${BOX_H}" rx="6" fill="#111214"/>
+      <circle cx="${bx + 16}" cy="${BOX_Y + 20}" r="4.5" fill="${col}"/>
+      <text x="${bx + 28}" y="${BOX_Y + 24}"
+            fill="#b5b9bf" font-size="13" font-family="DejaVu Sans">${escapeXml(s.label)}</text>
+      <text x="${bx + 14}" y="${BOX_Y + 50}"
+            fill="#e8e9eb" font-size="20" font-weight="bold"
+            font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
+  });
+
+  // ── Header text ──────────────────────────────────────────────────────
+  const textX      = iconBuffer ? ICON_X + ICON_SZ + 14 : 20;
+  const titleEl    = title
+    ? `<text x="${textX}" y="42" fill="#e8e9eb" font-size="20" font-weight="bold"
+             font-family="DejaVu Sans">${escapeXml(title)}</text>`
+    : '';
+  const subtitleEl = subtitle
+    ? `<text x="${textX}" y="63" fill="#b5b9bf" font-size="14"
+             font-family="DejaVu Sans">${escapeXml(subtitle)}</text>`
+    : '';
+
+  // ── Body panels ──────────────────────────────────────────────────────
+  const bodyStartY = HEADER_H + BODY_PAD;
+  let panelsSvg    = '';
+
+  panels.forEach((panel, i) => {
+    const row    = Math.floor(i / PANELS_PER_ROW);
+    const col    = i % PANELS_PER_ROW;
+    const px     = BODY_PAD + col * (PANEL_W + PANEL_GAP);
+    const py     = bodyStartY + row * (PANEL_H + PANEL_GAP);
+    const accent = panel.color || null;
+
+    panelsSvg += `<rect x="${px}" y="${py}" width="${PANEL_W}" height="${PANEL_H}" rx="8" fill="#111214"/>`;
+
+    if (accent) {
+      panelsSvg += `<rect x="${px}" y="${py}" width="4" height="${PANEL_H}" rx="2" fill="${accent}"/>`;
+    }
+
+    const textStartX = px + (accent ? 20 : 16);
+
+    panelsSvg += `
+      <text x="${textStartX}" y="${py + 22}"
+            fill="#b5b9bf" font-size="13" font-family="DejaVu Sans">${escapeXml(panel.title)}</text>`;
+
+    panel.lines.forEach((line, li) => {
+      panelsSvg += `
+        <text x="${textStartX}" y="${py + 44 + li * 22}"
+              fill="#e8e9eb" font-size="15" font-family="DejaVu Sans">${escapeXml(line)}</text>`;
+    });
+  });
+
+  // ── Note line ─────────────────────────────────────────────────────────
+  let noteSvg = '';
+  if (note) {
+    const noteY = bodyStartY + panelsBlockH + PANEL_GAP + 18;
+    noteSvg = `
+      <text x="${BODY_PAD}" y="${noteY}"
+            fill="#72767d" font-size="13" font-family="DejaVu Sans">${escapeXml(note)}</text>`;
+  }
+
+  // ── Footer ────────────────────────────────────────────────────────────
+  const ftY        = FOOTER_Y + 26;
+  const footerLeft = lookback
+    ? `<text x="20" y="${ftY}" fill="#72767d" font-size="13"
+             font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>`
+    : '';
+  const footerRight = `
+    <circle cx="${CARD_W - 98}" cy="${FOOTER_Y + 20}" r="5" fill="#5865F2"/>
+    <text x="${CARD_W - 88}" y="${ftY}" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans">PrimalGame</text>`;
+
+  // ── Card SVG ──────────────────────────────────────────────────────────
+  const cardSvg = `
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${HEADER_H}" fill="#232428"/>
+  <rect y="${HEADER_H}" width="${CARD_W}" height="${BODY_H}" fill="#2b2d31"/>
+  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#1e1f22"/>
+  <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}"
+        stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}"
+        stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  ${statBoxesSvg}
+  ${titleEl}
+  ${subtitleEl}
+  ${panelsSvg}
+  ${noteSvg}
+  ${footerLeft}
+  ${footerRight}
+</svg>`;
+
+  // ── Composite + rounded corners ───────────────────────────────────────
+  const composites = [];
+  if (iconBuffer) composites.push({ input: iconBuffer, top: ICON_Y, left: ICON_X });
+
+  const flat = composites.length > 0
+    ? await sharp(Buffer.from(cardSvg)).composite(composites).png().toBuffer()
+    : await sharp(Buffer.from(cardSvg)).png().toBuffer();
+
+  const maskBuffer = await sharp(Buffer.from(`
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${CARD_H}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
+</svg>`)).png().toBuffer();
+
+  return sharp(flat)
+    .composite([{ input: maskBuffer, blend: 'dest-in' }])
+    .png()
+    .toBuffer();
+}
+
+module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, bucketRoundsByMap, PALETTE };
