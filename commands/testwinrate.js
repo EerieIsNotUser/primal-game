@@ -372,42 +372,51 @@ module.exports = {
     // ── Embed ─────────────────────────────────────────────────────────────
     const winColor = winRate >= 55 ? 0x57F287 : winRate <= 40 ? 0xED4245 : 0xFEE75C;
     const serverLabel = serverType === 'pro' ? 'Pro' : 'Regular';
-    const categoryIcon = category === 'dino' ? '🦕' : category === 'vehicle' ? '🚗' : '🔫';
+
+    const deltaNote = changeLines.length > 0
+      ? '\n' + changeLines.map(l => l.replace(/^⚠️\s*/, '')).join('\n')
+      : '';
 
     const embed = new EmbedBuilder()
       .setColor(winColor)
-      .setAuthor({ name: `*(test)* ${categoryIcon} ${categoryLabel} · ${serverLabel} · ${gameMode}` })
+      .setAuthor({ name: `${categoryLabel} · ${serverLabel} · ${gameMode}  (test data)` })
       .setTitle(item)
-      .setDescription(`${periodLabel} · ${filtered.length.toLocaleString()} round${filtered.length !== 1 ? 's' : ''} generated${resultFilterLabel}`)
+      .setDescription(
+        `**${winRate}%** ${category === 'dino' ? 'dino' : 'survivor'} win rate  ·  ` +
+        `${filtered.length.toLocaleString()} rounds  ·  ${periodLabel}${resultFilterLabel}` +
+        deltaNote
+      )
       .addFields(
-        { name: 'Win Rate',        value: `**${winRate}%**`, inline: true },
-        { name: 'Rounds',          value: filtered.length.toLocaleString(), inline: true },
-        { name: 'vs Prior Period', value: `${baselineRate}% (${baseline.length} rounds)`, inline: true },
+        { name: 'Win Rate',       value: `${winRate}%`,                                   inline: true },
+        { name: 'Rounds',         value: filtered.length.toLocaleString(),                 inline: true },
+        { name: 'vs Prior Period', value: `${baselineRate}%  (${baseline.length} rounds)`, inline: true },
+        { name: 'Best Map',       value: topMap ? `${topMap[0]} (${topMap[1]}x)` : '—',   inline: true },
       );
-
-    if (changeLines.length > 0) {
-      embed.addFields({ name: '⚠️ Significant Changes', value: changeLines.join('\n') });
-    }
-
-    embed.addFields({ name: '🗺️ Most Common Map', value: topMap ? `${topMap[0]} (${topMap[1]}x)` : 'No data', inline: true });
 
     if (category === 'dino') {
       embed.addFields(
-        { name: '✅ Won — Car',  value: breakdownData.wonCar,  inline: true },
-        { name: '✅ Won — Gun',  value: breakdownData.wonGun,  inline: true },
-        { name: '❌ Lost — Car', value: breakdownData.lostCar, inline: true },
-        { name: '❌ Lost — Gun', value: breakdownData.lostGun, inline: true },
-        { name: '📦 Pickup',     value: breakdownData.pickup,  inline: true },
+        {
+          name:  'When Won',
+          value: `Car: ${breakdownData.wonCar}\nGun: ${breakdownData.wonGun}\nPickup: ${breakdownData.pickup}`,
+          inline: true,
+        },
+        {
+          name:  'When Lost',
+          value: `Car: ${breakdownData.lostCar}\nGun: ${breakdownData.lostGun}`,
+          inline: true,
+        },
       );
     } else {
       embed.addFields(
-        { name: '🦕 Winning Dino',             value: breakdownData.topDino, inline: true },
-        { name: `🔗 ${breakdownData.coLabel}`, value: breakdownData.coItem,  inline: true },
-        { name: '📦 Pickup',                   value: breakdownData.pickup,  inline: true },
+        { name: 'Winning Dino',          value: breakdownData.topDino, inline: true },
+        { name: breakdownData.coLabel,   value: breakdownData.coItem,  inline: true },
+        { name: 'Pickup',                value: breakdownData.pickup,  inline: true },
       );
     }
 
-    embed.setFooter({ text: 'Synthetic test data · PrimalGame' });
+    embed
+      .setFooter({ text: 'Synthetic data · PrimalGame' })
+      .setTimestamp();
 
     // ── Attachment ────────────────────────────────────────────────────────
     const { rows: tableRows, sampled, originalCount } = capAndSample(filtered);

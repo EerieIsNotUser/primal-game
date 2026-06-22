@@ -394,47 +394,56 @@ module.exports = {
     // ── Embed ─────────────────────────────────────────────────────────────
     const winColor = winRatePct >= 55 ? 0x57F287 : winRatePct <= 40 ? 0xED4245 : 0xFEE75C;
     const serverLabel = serverType === 'pro' ? 'Pro' : 'Regular';
-    const categoryIcon = category === 'vehicle' ? '🚗' : '🔫';
+
+    // Significance line — one concise sentence in the description, not a field
+    let sigLine = '';
+    if (significanceNote.includes('SIGNIFICANTLY')) {
+      const direction = winRatePct < (baseline ? Math.round((baseline.wins / baseline.total) * 100) : 50) ? 'below' : 'above';
+      const baselinePct = baseline ? Math.round((baseline.wins / baseline.total) * 100) : 0;
+      sigLine = `\n↓ Significantly ${direction} baseline (p < 0.05) — all-time avg ${baselinePct}%`;
+    }
+
+    const baselineText = baseline && baseline.total >= 5
+      ? `${Math.round((baseline.wins / baseline.total) * 100)}%  (${baseline.total.toLocaleString()} rounds)`
+      : '—';
+
+    const coItemName  = category === 'vehicle'
+      ? (topCoWeapon  ? `${topCoWeapon[0]} (${topCoWeapon[1]}x)`   : '—')
+      : (topCoVehicle ? `${topCoVehicle[0]} (${topCoVehicle[1]}x)` : '—');
+    const coItemLabel = category === 'vehicle' ? 'Co-occurring Gun' : 'Co-occurring Car';
+
+    const dinoWinPairing = dinoWinRows.length > 0
+      ? (category === 'vehicle'
+          ? (topWeapon  ? `${topWeapon[0]} (${topWeapon[1]}x)`   : '—')
+          : (topVehicle ? `${topVehicle[0]} (${topVehicle[1]}x)` : '—'))
+      : null;
+    const dinoWinLabel = category === 'vehicle' ? 'DinoWin — Top Gun' : 'DinoWin — Top Car';
 
     const embed = new EmbedBuilder()
       .setColor(winColor)
-      .setAuthor({ name: `${categoryIcon} ${categoryLabel} · ${serverLabel} Servers` })
+      .setAuthor({ name: `${categoryLabel} · ${serverLabel} Servers` })
       .setTitle(item)
-      .setDescription(`${periodLabel} · ${rows.length.toLocaleString()} round${rows.length !== 1 ? 's' : ''}`)
+      .setDescription(
+        `**${winRatePct}%** survivor win rate  ·  ${rows.length.toLocaleString()} rounds  ·  ${periodLabel}` +
+        sigLine
+      )
       .addFields(
-        { name: 'Win Rate',  value: `**${winRatePct}%**`, inline: true },
-        { name: 'Rounds',    value: rows.length.toLocaleString(), inline: true },
-        { name: 'Baseline',  value: baseline && baseline.total >= 5
-            ? `${Math.round((baseline.wins / baseline.total) * 100)}% (${baseline.total} rounds)`
-            : 'Insufficient data', inline: true },
+        { name: 'Win Rate', value: `${winRatePct}%`,              inline: true },
+        { name: 'Rounds',   value: rows.length.toLocaleString(),   inline: true },
+        { name: 'Baseline', value: baselineText,                   inline: true },
+        { name: 'Best Map', value: topMap ? `${topMap[0]} (${topMap[1]}x)` : '—', inline: true },
+        { name: coItemLabel, value: coItemName, inline: true },
       );
 
-    if (significanceNote.trim()) {
-      embed.addFields({
-        name: significanceNote.includes('SIGNIFICANTLY') ? '⚠️ Statistical Alert' : 'ℹ️ Baseline Note',
-        value: significanceNote.replace(/^\n+/, '').trim().slice(0, 1024),
-      });
+    if (dinoWinPairing) {
+      embed.addFields({ name: dinoWinLabel, value: dinoWinPairing, inline: true });
+    } else {
+      embed.addFields({ name: '\u200B', value: '\u200B', inline: true });
     }
 
-    embed.addFields(
-      { name: '🗺️ Most Common Map', value: topMap ? `${topMap[0]} (${topMap[1]}x)` : 'No data', inline: true },
-      {
-        name: category === 'vehicle' ? '🔗 Co-occurring Gun' : '🔗 Co-occurring Car',
-        value: category === 'vehicle'
-          ? (topCoWeapon ? `${topCoWeapon[0]} (${topCoWeapon[1]}x)` : 'No data')
-          : (topCoVehicle ? `${topCoVehicle[0]} (${topCoVehicle[1]}x)` : 'No data'),
-        inline: true,
-      },
-    );
-
-    if (dinoWinRows.length > 0) {
-      const dinoWinField = category === 'vehicle'
-        ? { name: '🦕 DinoWin — Top Gun', value: topWeapon ? `${topWeapon[0]} (${topWeapon[1]}x)` : 'No data' }
-        : { name: '🦕 DinoWin — Top Car', value: topVehicle ? `${topVehicle[0]} (${topVehicle[1]}x)` : 'No data' };
-      embed.addFields(dinoWinField);
-    }
-
-    embed.setFooter({ text: 'MVP-correlation proxy — not true per-item win rate · PrimalGame' });
+    embed
+      .setFooter({ text: 'MVP-correlation proxy · PrimalGame' })
+      .setTimestamp();
 
     // ── Attachment ────────────────────────────────────────────────────────
     const { rows: tableRows, sampled, originalCount } = capAndSample(rows);
