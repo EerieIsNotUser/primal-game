@@ -59,8 +59,8 @@ async function runAnomalyCheck(client, supabase) {
 
   // Fetch last SAMPLE_SIZE rounds
   const { data: rows, error } = await supabase
-    .from('round_players')
-    .select('dino, weapon, vehicle, won')
+    .from('round_logs')
+    .select('mvp_equipped_weapon, mvp_equipped_vehicle, round_result')
     .order('id', { ascending: false })
     .limit(SAMPLE_SIZE);
 
@@ -79,14 +79,21 @@ async function runAnomalyCheck(client, supabase) {
 
   const alerts = [];
 
+  // Remap rows to normalised shape — MVP-correlation proxy same as /winrate.
+  // Dino category omitted until KKG adds a dino identity field to round_logs.
+  const normalisedRows = rows.map(r => ({
+    weapon:  r.mvp_equipped_weapon  ?? null,
+    vehicle: r.mvp_equipped_vehicle ?? null,
+    won:     r.round_result === 'SurvivorWin',
+  }));
+
   const categories = [
-    { key: 'dino',    emoji: '🦖', label: 'Dinosaur' },
-    { key: 'weapon',  emoji: '🔫', label: 'Weapon'   },
-    { key: 'vehicle', emoji: '🚗', label: 'Vehicle'  },
+    { key: 'weapon',  emoji: '🔫', label: 'Weapon'  },
+    { key: 'vehicle', emoji: '🚗', label: 'Vehicle' },
   ];
 
   for (const { key, emoji, label } of categories) {
-    const winRates = aggregateWinRates(rows, key);
+    const winRates = aggregateWinRates(normalisedRows, key);
 
     for (const [name, { wins, total, winRate }] of winRates) {
       if (total < MIN_SAMPLE) continue;
