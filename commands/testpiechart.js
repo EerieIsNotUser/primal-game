@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { buildPieCard } = require('../modules/chart');
+const { buildPieCard, MAP_COLORS } = require('../modules/chart');
 
 // ─── /testpiechart ────────────────────────────────────────────────────────
 // Generates synthetic data and posts both modes (distribution + win/loss)
@@ -51,6 +51,7 @@ module.exports = {
     const distSegments = ALL_MAPS.map(map => ({
       label: map,
       value: randInt(MAP_PROFILES[map].base - MAP_PROFILES[map].variance, MAP_PROFILES[map].base + MAP_PROFILES[map].variance),
+      color: MAP_COLORS[map],
     })).sort((a, b) => b.value - a.value);
     const distTotal = distSegments.reduce((s, r) => s + r.value, 0);
 
