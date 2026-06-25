@@ -71,6 +71,26 @@ client.on('interactionCreate', async interaction => {
     return;
   }
 
+  // ── Button / select menu component handlers ───────────────────────────
+  if (interaction.isButton() || interaction.isStringSelectMenu()) {
+    const id = interaction.customId;
+    let commandName = null;
+    if (id.startsWith('mapchart_') || id.startsWith('preview_')) commandName = 'mapchart';
+    if (id.startsWith('piechart_'))                               commandName = 'piechart';
+
+    if (commandName) {
+      const command = client.commands.get(commandName);
+      if (command?.handleComponent) {
+        try {
+          await command.handleComponent(interaction, { supabase });
+        } catch (err) {
+          console.error(`Error handling component ${id}:`, err);
+        }
+      }
+      return;
+    }
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const command = client.commands.get(interaction.commandName);

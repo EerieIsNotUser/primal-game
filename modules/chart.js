@@ -739,4 +739,221 @@ async function buildStatCard({
     .toBuffer();
 }
 
-module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, bucketRoundsByMap, PALETTE };
+// ── Donut chart helpers ───────────────────────────────────────────────────────
+function polarToCartesian(cx, cy, r, angleDeg) {
+  const rad = (angleDeg - 90) * Math.PI / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+function donutSegmentPath(cx, cy, outerR, innerR, startDeg, endDeg) {
+  const o1   = polarToCartesian(cx, cy, outerR, startDeg);
+  const o2   = polarToCartesian(cx, cy, outerR, endDeg);
+  const i1   = polarToCartesian(cx, cy, innerR, endDeg);
+  const i2   = polarToCartesian(cx, cy, innerR, startDeg);
+  const large = (endDeg - startDeg) > 180 ? 1 : 0;
+  return [
+    `M ${o1.x.toFixed(2)} ${o1.y.toFixed(2)}`,
+    `A ${outerR} ${outerR} 0 ${large} 1 ${o2.x.toFixed(2)} ${o2.y.toFixed(2)}`,
+    `L ${i1.x.toFixed(2)} ${i1.y.toFixed(2)}`,
+    `A ${innerR} ${innerR} 0 ${large} 0 ${i2.x.toFixed(2)} ${i2.y.toFixed(2)}`,
+    'Z',
+  ].join(' ');
+}
+
+/**
+ * Branded donut chart card.
+ * Left panel: ranked list. Right panel: donut + legend.
+ *
+ * @param {object} opts
+ *   title       {string}  header title
+ *   subtitle    {string}  header subtitle
+ *   stats       {Array}   up to 3 × { label, value, color? } callout boxes
+ *   lookback    {string}  footer left text
+ *   segments    {Array}   [{ label, value, color? }] sorted descending
+ *   centerLabel {string}  text in donut hole — use \n to split two lines
+ * @returns {Promise<Buffer>} RGBA PNG with rounded corners
+ */
+async function buildPieCard({
+  title       = '',
+  subtitle    = '',
+  stats       = [],
+  lookback    = '',
+  segments    = [],
+  centerLabel = '',
+} = {}) {
+  const CARD_W   = 1200;
+  const HEADER_H = 90;
+  const FOOTER_H = 40;
+  const BODY_H   = 400;
+  const CORNER_R = 14;
+  const ICON_SZ  = 48;
+  const ICON_X   = 14;
+  const ICON_Y   = 21;
+  const CARD_H   = HEADER_H + BODY_H + FOOTER_H;
+  const FOOTER_Y = HEADER_H + BODY_H;
+
+  const LIST_PAD = 24;
+  const LIST_W   = 350;
+  const ROW_H    = 30;
+  const ROW_GAP  = 5;
+
+  const OUTER_R   = 155;
+  const INNER_R   = 93;
+  const DIVIDER_X = LIST_PAD + LIST_W + 12;          // 386
+  const CX        = DIVIDER_X + 12 + 20 + OUTER_R;  // 573
+  const CY        = HEADER_H + Math.floor(BODY_H / 2); // 290
+  const LEGEND_X  = CX + OUTER_R + 28;               // 756
+
+  // ── Icon ─────────────────────────────────────────────────────────────
+  let iconBuffer = null;
+  try {
+    const raw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
+      .resize(ICON_SZ, ICON_SZ, { fit: 'cover' }).png().toBuffer();
+    const iconMask = await sharp(Buffer.from(
+      `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">` +
+      `<rect width="${ICON_SZ}" height="${ICON_SZ}" rx="10" fill="white"/></svg>`
+    )).png().toBuffer();
+    iconBuffer = await sharp(raw)
+      .composite([{ input: iconMask, blend: 'dest-in' }]).png().toBuffer();
+  } catch (_) {}
+
+  // ── Header stat boxes ────────────────────────────────────────────────
+  const BOX_W   = 160;
+  const BOX_H   = 62;
+  const BOX_GAP = 10;
+  const BOX_Y   = Math.round((HEADER_H - BOX_H) / 2);
+  const capped  = stats.slice(0, 3);
+  const totalBW = capped.length * BOX_W + Math.max(0, capped.length - 1) * BOX_GAP;
+  let statBoxesSvg = '';
+  capped.forEach((s, i) => {
+    const bx  = CARD_W - 14 - totalBW + i * (BOX_W + BOX_GAP);
+    const col = s.color || '#5865F2';
+    statBoxesSvg += `
+      <rect x="${bx}" y="${BOX_Y}" width="${BOX_W}" height="${BOX_H}" rx="6" fill="#111214"/>
+      <circle cx="${bx + 16}" cy="${BOX_Y + 20}" r="4.5" fill="${col}"/>
+      <text x="${bx + 28}" y="${BOX_Y + 24}" fill="#b5b9bf" font-size="13" font-family="DejaVu Sans">${escapeXml(s.label)}</text>
+      <text x="${bx + 14}" y="${BOX_Y + 55}" fill="${col}" font-size="28" font-weight="bold" font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
+  });
+
+  // ── Header text ──────────────────────────────────────────────────────
+  const textX      = iconBuffer ? ICON_X + ICON_SZ + 14 : 20;
+  const titleEl    = title    ? `<text x="${textX}" y="42" fill="#e8e9eb" font-size="20" font-weight="bold" font-family="DejaVu Sans">${escapeXml(title)}</text>`    : '';
+  const subtitleEl = subtitle ? `<text x="${textX}" y="63" fill="#b5b9bf" font-size="14" font-family="DejaVu Sans">${escapeXml(subtitle)}</text>` : '';
+
+  // ── Assign colours + compute total ───────────────────────────────────
+  const total = segments.reduce((s, r) => s + r.value, 0) || 1;
+  const segs  = segments.map((s, i) => ({ ...s, color: s.color || PALETTE[i % PALETTE.length] }));
+
+  // ── Donut segments ────────────────────────────────────────────────────
+  let donutSvg  = '';
+  const GAP_DEG = segs.length > 1 ? 2 : 0;
+  let currentDeg = 0;
+  segs.forEach(s => {
+    const spanDeg = (s.value / total) * 360;
+    if (spanDeg <= GAP_DEG) { currentDeg += spanDeg; return; }
+    const startDeg = currentDeg + GAP_DEG / 2;
+    const endDeg   = currentDeg + spanDeg - GAP_DEG / 2;
+    donutSvg += `<path d="${donutSegmentPath(CX, CY, OUTER_R, INNER_R, startDeg, endDeg)}" fill="${s.color}"/>`;
+    currentDeg += spanDeg;
+  });
+
+  // Center label
+  if (centerLabel) {
+    const parts = centerLabel.includes('\n') ? centerLabel.split('\n') : [centerLabel, ''];
+    donutSvg += `
+      <text x="${CX}" y="${CY - 6}" fill="#e8e9eb" font-size="24" font-weight="bold"
+            font-family="DejaVu Sans" text-anchor="middle">${escapeXml(parts[0])}</text>`;
+    if (parts[1]) {
+      donutSvg += `
+        <text x="${CX}" y="${CY + 18}" fill="#72767d" font-size="14"
+              font-family="DejaVu Sans" text-anchor="middle">${escapeXml(parts[1])}</text>`;
+    }
+  }
+
+  // ── Legend ────────────────────────────────────────────────────────────
+  const legendItems  = segs.slice(0, 10);
+  const legendStartY = CY - Math.floor((legendItems.length * 24) / 2);
+  let legendSvg = '';
+  legendItems.forEach((s, i) => {
+    const pct       = ((s.value / total) * 100).toFixed(1);
+    const ly        = legendStartY + i * 24;
+    const labelText = escapeXml(s.label.length > 18 ? s.label.slice(0, 17) + '…' : s.label);
+    legendSvg += `
+      <circle cx="${LEGEND_X + 6}" cy="${ly + 6}" r="5" fill="${s.color}"/>
+      <text x="${LEGEND_X + 18}" y="${ly + 11}" fill="#b5b9bf" font-size="13"
+            font-family="DejaVu Sans">${labelText}  ${pct}%</text>`;
+  });
+
+  // ── Ranked list ───────────────────────────────────────────────────────
+  const visibleRows  = Math.min(segs.length, 10);
+  const listStartY   = HEADER_H + Math.floor((BODY_H - visibleRows * (ROW_H + ROW_GAP)) / 2);
+  let listSvg = '';
+  segs.slice(0, 10).forEach((s, i) => {
+    const pct   = ((s.value / total) * 100).toFixed(1);
+    const rowY  = listStartY + i * (ROW_H + ROW_GAP);
+    const label = escapeXml(s.label.length > 20 ? s.label.slice(0, 19) + '…' : s.label);
+    listSvg += `
+      <rect x="${LIST_PAD}" y="${rowY}" width="${LIST_W}" height="${ROW_H}" rx="5"
+            fill="#2b2d31" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+      <text x="${LIST_PAD + 22}" y="${rowY + 20}" fill="${s.color}" font-size="14" font-weight="bold"
+            font-family="DejaVu Sans" text-anchor="middle">${i + 1}</text>
+      <text x="${LIST_PAD + 38}" y="${rowY + 20}" fill="#e8e9eb" font-size="14"
+            font-family="DejaVu Sans">${label}</text>
+      <text x="${LIST_PAD + LIST_W - 8}" y="${rowY + 20}" fill="#72767d" font-size="13"
+            font-family="DejaVu Sans" text-anchor="end">${pct}%</text>`;
+  });
+
+  // Divider
+  const dividerSvg = `<line x1="${DIVIDER_X}" y1="${HEADER_H + 20}" x2="${DIVIDER_X}" y2="${FOOTER_Y - 20}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
+
+  // ── Footer ────────────────────────────────────────────────────────────
+  const ftY        = FOOTER_Y + 26;
+  const footerLeft = lookback
+    ? `<text x="20" y="${ftY}" fill="#72767d" font-size="13" font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>`
+    : '';
+  const footerRight = `
+    <rect x="${CARD_W - 118}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
+    <text x="${CARD_W - 104}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="middle">PG</text>
+    <text x="${CARD_W - 84}" y="${ftY}" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans">PrimalGame</text>`;
+
+  // ── Card SVG ──────────────────────────────────────────────────────────
+  const cardSvg = `
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${HEADER_H}" fill="#1e2024"/>
+  <rect y="${HEADER_H}" width="${CARD_W}" height="${BODY_H}" fill="#15171a"/>
+  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#0e0f11"/>
+  <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  ${statBoxesSvg}
+  ${titleEl}
+  ${subtitleEl}
+  ${listSvg}
+  ${dividerSvg}
+  ${donutSvg}
+  ${legendSvg}
+  ${footerLeft}
+  ${footerRight}
+</svg>`;
+
+  // ── Composite + rounded corners ───────────────────────────────────────
+  const composites = [];
+  if (iconBuffer) composites.push({ input: iconBuffer, top: ICON_Y, left: ICON_X });
+
+  const flat = composites.length > 0
+    ? await sharp(Buffer.from(cardSvg)).composite(composites).png().toBuffer()
+    : await sharp(Buffer.from(cardSvg)).png().toBuffer();
+
+  const maskBuffer = await sharp(Buffer.from(`
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${CARD_H}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
+</svg>`)).png().toBuffer();
+
+  return sharp(flat)
+    .composite([{ input: maskBuffer, blend: 'dest-in' }])
+    .png()
+    .toBuffer();
+}
+
+module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, bucketRoundsByMap, PALETTE };
