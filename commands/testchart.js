@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { buildLineChartImage, buildDualAxisChartImage, buildChartCard } = require('../modules/chart');
+const { buildLineChartImage, buildDualAxisChartImage, buildChartCard, MAP_COLORS } = require('../modules/chart');
 
 const ALL_MAPS = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
 
@@ -132,7 +132,7 @@ module.exports = {
 
     if (mode === 'single' || mode === 'all') {
       const data = generateSeries(days, MAP_PROFILES[primaryMap]);
-      const chartBuffer = await buildLineChartImage(labels, [{ label: primaryMap, data }], null);
+      const chartBuffer = await buildLineChartImage(labels, [{ label: primaryMap, data, color: MAP_COLORS[primaryMap] }], null);
       const buffer = await buildChartCard(chartBuffer, {
         title: `${primaryMap} — Rounds Played`,
         subtitle: `Primal Pursuit · Past ${days} Days`,
@@ -149,6 +149,7 @@ module.exports = {
       const series = overlayMaps.map(map => ({
         label: map,
         data: generateSeries(days, MAP_PROFILES[map]),
+        color: MAP_COLORS[map],
       }));
       const totalRounds = series.flatMap(s => s.data).reduce((a, b) => a + b, 0);
       const chartBuffer = await buildLineChartImage(labels, series, null);
@@ -174,7 +175,7 @@ module.exports = {
         overlayMaps.reduce((sum, map) => sum + dualMapsData[map][i], 0)
       );
 
-      const lineSeries = overlayMaps.map(map => ({ label: map, data: dualMapsData[map] }));
+      const lineSeries = overlayMaps.map(map => ({ label: map, data: dualMapsData[map], color: MAP_COLORS[map] }));
       const totalRounds = totalPerDay.reduce((a, b) => a + b, 0);
 
       const dualTitle = overlayMaps.length === 1

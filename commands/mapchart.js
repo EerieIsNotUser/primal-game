@@ -6,7 +6,7 @@ const {
   ButtonStyle,
   StringSelectMenuBuilder,
 } = require('discord.js');
-const { buildLineChartImage, buildDualAxisChartImage, buildChartCard, bucketRoundsByMap } = require('../modules/chart');
+const { buildLineChartImage, buildDualAxisChartImage, buildChartCard, bucketRoundsByMap, MAP_COLORS } = require('../modules/chart');
 
 // ─── /mapchart ───────────────────────────────────────────────────────────
 // Two chart types, switchable via dropdown:
@@ -247,13 +247,14 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
     const totalPerDay = labels.map((_, i) => series.reduce((sum, s) => sum + (s.data[i] || 0), 0));
     chartBuffer = await buildDualAxisChartImage(
       labels, totalPerDay, 'Total Rounds Played (All Maps)',
-      [{ label: mapSeries.label, data: mapSeries.data }],
+      [{ label: mapSeries.label, data: mapSeries.data, color: MAP_COLORS[mapSeries.label] }],
       null
     );
     cardTitle = `${mapSeries.label} — Popularity vs Total Rounds`;
   } else {
     mapsShown = series.map(s => s.label);
-    chartBuffer = await buildLineChartImage(labels, series, null);
+    const coloredSeries = series.map(s => ({ ...s, color: MAP_COLORS[s.label] ?? s.color }));
+    chartBuffer = await buildLineChartImage(labels, coloredSeries, null);
     cardTitle = 'Map Popularity';
   }
 

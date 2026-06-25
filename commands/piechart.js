@@ -5,7 +5,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
 } = require('discord.js');
-const { buildPieCard } = require('../modules/chart');
+const { buildPieCard, MAP_COLORS } = require('../modules/chart');
 
 // ─── /piechart ────────────────────────────────────────────────────────────
 // No map: donut shows round distribution across all maps.
@@ -88,7 +88,7 @@ async function renderPieChart(interaction, supabase, { mapFilter, serverType, da
     }
     segments = [...mapCounts.entries()]
       .sort((a, b) => b[1] - a[1])
-      .map(([label, value]) => ({ label, value }));
+      .map(([label, value]) => ({ label, value, color: MAP_COLORS[label] }));
 
     if (segments.length === 0) return interaction.editReply('No map data available.');
 

@@ -30,6 +30,14 @@ const PLOT_H = HEIGHT - PADDING.top - PADDING.bottom;
 
 const PALETTE = ['#5865F2', '#57F287', '#FEE75C', '#EB459E', '#ED4245', '#9B59B6'];
 
+// Canonical map colors — used across all chart and pie commands
+const MAP_COLORS = {
+  'Jungle':      '#2EA84A',   // darker green
+  'Primal Park': '#7ED957',   // lighter green
+  'Canyon':      '#F07830',   // orange
+  'Cavern':      '#4A8FE8',   // blue
+};
+
 function hexToRgb(hex) {
   return {
     r: parseInt(hex.slice(1, 3), 16),
@@ -956,4 +964,4 @@ async function buildPieCard({
     .toBuffer();
 }
 
-module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, bucketRoundsByMap, PALETTE };
+module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, bucketRoundsByMap, PALETTE, MAP_COLORS };
