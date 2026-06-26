@@ -10,7 +10,7 @@ const { buildPieCard, MAP_COLORS } = require('../modules/chart');
 // ─── /piechart ────────────────────────────────────────────────────────────
 // No map: donut shows round distribution across all maps.
 // With map: donut shows DinoWin vs SurvivorWin for that map.
-// server_type filters to regular/pro; defaults to all.
+// game_mode filters to Normal/Double Trouble; defaults to all.
 
 const ALL_MAPS = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
 
@@ -29,10 +29,10 @@ function buildDaysButtonRow(activeDays) {
   );
 }
 
-async function renderPieChart(interaction, supabase, { mapFilter, serverType, days }) {
+async function renderPieChart(interaction, supabase, { mapFilter, gameMode, days }) {
   const endDate   = new Date();
   const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const serverLabel = serverType ? (serverType === 'pro' ? 'Pro' : 'Regular') : 'All Servers';
+  const modeLabel = gameMode ?? 'All Modes';
 
   let query = supabase
     .from('round_logs')
@@ -40,7 +40,7 @@ async function renderPieChart(interaction, supabase, { mapFilter, serverType, da
     .gte('played_at', startDate.toISOString())
     .lte('played_at', endDate.toISOString());
 
-  if (serverType) query = query.eq('game_mode', serverType);
+  if (gameMode) query = query.eq('game_mode', gameMode);
 
   const { data: rows, error } = await query;
   if (error) return interaction.editReply('❌ Something went wrong fetching round data.');
@@ -69,7 +69,7 @@ async function renderPieChart(interaction, supabase, { mapFilter, serverType, da
 
     const buffer = await buildPieCard({
       title: cardTitle,
-      subtitle: `Primal Pursuit · ${serverLabel} · Past ${days} Days`,
+      subtitle: `Primal Pursuit · ${modeLabel} · Past ${days} Days`,
       stats: cardStats,
       lookback: `Past ${days} Days`,
       segments,
@@ -100,7 +100,7 @@ async function renderPieChart(interaction, supabase, { mapFilter, serverType, da
 
     const buffer = await buildPieCard({
       title: cardTitle,
-      subtitle: `Primal Pursuit · ${serverLabel} · Past ${days} Days`,
+      subtitle: `Primal Pursuit · ${modeLabel} · Past ${days} Days`,
       stats: cardStats,
       lookback: `Past ${days} Days`,
       segments,
@@ -125,12 +125,12 @@ module.exports = {
         .addChoices(...ALL_MAPS.map(m => ({ name: m, value: m })))
     )
     .addStringOption(opt =>
-      opt.setName('server_type')
-        .setDescription('Filter by server type (default: all)')
+      opt.setName('game_mode')
+        .setDescription('Filter by game mode (default: all)')
         .setRequired(false)
         .addChoices(
-          { name: 'Regular', value: 'regular' },
-          { name: 'Pro',     value: 'pro'     },
+          { name: 'Normal',         value: 'Normal'         },
+          { name: 'Double Trouble', value: 'Double Trouble' },
         )
     )
     .addIntegerOption(opt =>
@@ -144,13 +144,13 @@ module.exports = {
   async execute(interaction, { supabase }) {
     await interaction.deferReply();
     const mapFilter  = interaction.options.getString('map');
-    const serverType = interaction.options.getString('server_type');
+    const gameMode   = interaction.options.getString('game_mode') ?? null;
     const days       = interaction.options.getInteger('days') ?? 14;
 
-    await renderPieChart(interaction, supabase, { mapFilter, serverType, days });
+    await renderPieChart(interaction, supabase, { mapFilter, gameMode, days });
 
     const reply = await interaction.fetchReply();
-    setSession(reply.id, { mapFilter, serverType, days });
+    setSession(reply.id, { mapFilter, gameMode, days });
   },
 
   async handleComponent(interaction, { supabase }) {
