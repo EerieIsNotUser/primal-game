@@ -149,9 +149,13 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields: Round_Map and Round_Result' });
   }
 
+  // Normalise result values to canonical form — KKG's game emits 'HumanEscape'
+  // for survivor escapes; map to 'SurvivorWin' so all queries work consistently.
+  const normalisedResult = Round_Result === 'HumanEscape' ? 'SurvivorWin' : Round_Result;
+
   const { error } = await supabase.from('round_logs').insert({
     played_at: new Date().toISOString(),
-    round_result: Round_Result,
+    round_result: normalisedResult,
     average_level: Round_AverageLevel ?? null,
     number_of_players: Round_NumberOfPlayers ?? null,
     game_mode: Round_Game_Mode ?? null,
