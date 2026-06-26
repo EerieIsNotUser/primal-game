@@ -219,8 +219,9 @@ function buildChartNarrative(selectedRows, baselineRows, mapsShown) {
 }
 
 async function renderMapPopularity(interaction, supabase, days = 14, mapFilter = null) {
-  const endDate = new Date();
+  const endDate   = new Date();
   const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const bucketMs  = days <= 1 ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000; // hourly for 1d, daily otherwise
 
   const { data: rows, error } = await supabase
     .from('round_logs')
@@ -231,7 +232,7 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
   if (error) return interaction.editReply('❌ Something went wrong fetching round data.');
   if (!rows || rows.length === 0) return interaction.editReply(`No round data found for the past ${days} days.`);
 
-  const { labels, series } = bucketRoundsByMap(rows, startDate, endDate);
+  const { labels, series } = bucketRoundsByMap(rows, startDate, endDate, bucketMs);
   if (series.length === 0) return interaction.editReply('No map data available to chart.');
 
   const baselineRows = await getSixMonthBaseline(supabase);
