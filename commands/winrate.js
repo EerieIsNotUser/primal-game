@@ -24,14 +24,9 @@ const VEHICLES = ['ATV', 'Golf Cart', 'Jeep', 'Hypercar', 'Pickup Truck', 'Polic
 const WEAPONS = ['Pistol', 'Shotgun', 'MP5', 'Light Sniper', 'AR-15', 'AK-47', 'Crossbow', 'Heavy Sniper', 'AR-Dino', 'AR-Uni', 'P90', 'Water Gun', 'Raygun', 'Scar', 'Trike Shotgun', 'Minigun', 'IWS 2000', 'LMG', 'Deagle', 'Railgun', 'Plasma Rifle', 'Flamethrower', 'Tri-Beam', 'Scrapyard Shotgun', 'SPAS-12'];
 const DINOS = ['T-Rex', 'Pachy', 'Raptor', 'Carno', 'Dilo', 'Baryonyx', 'Cerato', 'Giga', 'Spino', 'Trike', 'Deino', 'Bronto', 'Exoraptor'];
 
-const SERVER_TYPES = [
-  { name: 'Regular', value: 'regular' },
-  { name: 'Pro', value: 'pro' },
-];
-
 const GAME_MODE_OPTIONS = [
-  { name: 'Standard', value: 'standard' },
-  { name: 'Double Trouble (placeholder — not cross-filterable yet)', value: 'doubletrouble' },
+  { name: 'Normal',         value: 'Normal'         },
+  { name: 'Double Trouble', value: 'Double Trouble' },
 ];
 
 const TIME_RANGES = [
@@ -231,15 +226,9 @@ module.exports = {
         .setAutocomplete(true)
     )
     .addStringOption(opt =>
-      opt.setName('server_type')
-        .setDescription('Server type to filter by')
-        .setRequired(true)
-        .addChoices(...SERVER_TYPES.map(s => ({ name: s.name, value: s.value })))
-    )
-    .addStringOption(opt =>
       opt.setName('game_mode')
-        .setDescription('Game mode to filter by')
-        .setRequired(true)
+        .setDescription('Game mode to filter by (default: all)')
+        .setRequired(false)
         .addChoices(...GAME_MODE_OPTIONS.map(s => ({ name: s.name, value: s.value })))
     )
     .addStringOption(opt =>
@@ -273,34 +262,16 @@ module.exports = {
   async execute(interaction, { supabase }) {
     await interaction.deferReply();
 
-    const category = interaction.options.getString('category');
-    const item = interaction.options.getString('item');
-    const serverType = interaction.options.getString('server_type');
-    const gameModeChoice = interaction.options.getString('game_mode');
-
-    if (gameModeChoice === 'doubletrouble' && serverType) {
-      return interaction.editReply(
-        `❌ Cross-filtering Double Trouble with a specific server type isn't possible yet — ` +
-        `the current data only tracks one combined game_mode value, not server type and game mode independently. ` +
-        `This is a known gap, flagged for KKG.\n\n` +
-        `Use \`/testwinrate\` to preview this once that field exists.`
-      );
-    }
-
-    // Until the schema splits server_type and game_mode, query against the
-    // existing single game_mode column using server_type as the value
-    // (Double Trouble path above is blocked, so this only ever receives
-    // 'regular' or 'pro' here).
-    const gameMode = serverType;
-    const datesInput = interaction.options.getString('dates');
-    const days = interaction.options.getString('time_range') ?? '30';
+    const category     = interaction.options.getString('category');
+    const item         = interaction.options.getString('item');
+    const gameMode     = interaction.options.getString('game_mode') ?? null;
+    const datesInput   = interaction.options.getString('dates');
+    const days         = interaction.options.getString('time_range') ?? '30';
 
     if (category === 'dino') {
       return interaction.editReply(
         `❌ Dino win rate isn't available yet — the current round logging doesn't track which dino was played. ` +
-        `This is a known gap, flagged for KKG. Once that field exists, this command will work the same way it does for vehicles/weapons, ` +
-        `including "most common winning dino against a car/gun" breakdowns.\n\n` +
-        `Use \`/testwinrate\` to preview this feature with synthetic data.`
+        `This is a known gap. Use \`/testwinrate\` to preview this feature with synthetic data.`
       );
     }
 
@@ -332,7 +303,7 @@ module.exports = {
       ? `${dateRange.startDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${dateRange.endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`
       : TIME_RANGES.find(t => t.value === days)?.name ?? 'selected period';
 
-    const modeLabel = GAME_MODES.find(s => s.value === gameMode)?.name ?? 'All';
+    const gameModeLabel = gameMode ?? 'All Modes';
     const categoryLabel = category === 'vehicle' ? 'Car' : 'Gun';
 
     // ── Statistical significance check vs all-time baseline ──────────────
@@ -394,7 +365,6 @@ module.exports = {
 
     // ── Stat card ─────────────────────────────────────────────────────────
     const winColorHex  = winRatePct >= 55 ? '#57F287' : winRatePct <= 40 ? '#ED4245' : '#FEE75C';
-    const serverLabel  = serverType === 'pro' ? 'Pro' : 'Regular';
 
     const baselineText = baseline && baseline.total >= 5
       ? `${Math.round((baseline.wins / baseline.total) * 100)}%  (${baseline.total.toLocaleString()})`
@@ -423,7 +393,7 @@ module.exports = {
 
     const cardBuffer = await buildStatCard({
       title:    item,
-      subtitle: `${categoryLabel} · ${serverLabel} Servers`,
+      subtitle: `${categoryLabel} · ${gameModeLabel}`,
       stats: [
         { label: 'Win Rate', value: `${winRatePct}%`,            color: winColorHex },
         { label: 'Rounds',   value: rows.length.toLocaleString(), color: '#5865F2'   },
