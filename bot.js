@@ -154,8 +154,16 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
   const normalisedResult = (Round_Result === 'HumanEscape' || Round_Result === 'HumanWin')
     ? 'SurvivorWin' : Round_Result;
 
+  // Use KKG's round-end timestamp as played_at for accuracy.
+  // received_at captures when Railway received the request (backup/audit).
+  const roundEndTime = req.body?.time
+    ? new Date(req.body.time * 1000).toISOString()
+    : new Date().toISOString();
+
   const { error } = await supabase.from('round_logs').insert({
-    played_at: new Date().toISOString(),
+    played_at:   roundEndTime,
+    received_at: new Date().toISOString(),
+    place_id:    req.body?.placeId ?? null,
     round_result: normalisedResult,
     average_level: Round_AverageLevel ?? null,
     number_of_players: Round_NumberOfPlayers ?? null,
