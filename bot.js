@@ -170,7 +170,7 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
     num_players_with_dinotrackers: Round_NumPlayers_WithDinoTrackers ?? 0,
     num_players_with_mines: Round_NumPlayers_WithMines ?? 0,
     num_players_with_gamepass_weapons: Round_NumPlayers_WithGamepassWeapons ?? 0,
-    dinosaurs_used: Array.isArray(Round_DinosaursUsed) ? Round_DinosaursUsed : null,
+    dinosaurs_used: Array.isArray(Round_DinosaursUsed) ? Round_DinosaursUsed : (Round_DinosaursUsed ? [Round_DinosaursUsed] : null),
     vehicles_used: Array.isArray(Round_VehiclesUsed) ? Round_VehiclesUsed : null,
     weapons_used: Array.isArray(Round_WeaponsUsed) ? Round_WeaponsUsed : null,
     mvp_equipped_vehicle: Round_MVP_EquippedVehicle ?? null,
