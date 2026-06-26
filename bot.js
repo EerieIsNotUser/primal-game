@@ -152,7 +152,8 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
 
   // Normalise result values to canonical form — KKG's game emits 'HumanEscape'
   // for survivor escapes; map to 'SurvivorWin' so all queries work consistently.
-  const normalisedResult = Round_Result === 'HumanEscape' ? 'SurvivorWin' : Round_Result;
+  const normalisedResult = (Round_Result === 'HumanEscape' || Round_Result === 'HumanWin')
+    ? 'SurvivorWin' : Round_Result;
 
   const { error } = await supabase.from('round_logs').insert({
     played_at: new Date().toISOString(),
