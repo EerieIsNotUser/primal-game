@@ -133,6 +133,7 @@ function requireIngestKey(req, res, next) {
 }
 
 app.post('/api/round-complete', requireIngestKey, async (req, res) => {
+  console.log('[round-complete] Raw payload:', JSON.stringify(req.body));
   // Support both flat payload and Logger.Send wrapper ({ level, data: { ... } })
   const body = req.body?.data ?? req.body;
   const {
