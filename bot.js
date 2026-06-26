@@ -124,7 +124,8 @@ app.get('/health', (req, res) => {
 
 // Shared-secret check for any future /api/* ingestion routes.
 function requireIngestKey(req, res, next) {
-  const key = req.headers['x-api-key'];
+  const key = req.headers['x-api-key']
+    ?? req.headers['authorization']?.replace(/^Bearer\s+/i, '');
   if (!key || key !== process.env.INGEST_API_KEY) {
     return res.status(401).json({ error: 'unauthorized' });
   }
@@ -132,6 +133,8 @@ function requireIngestKey(req, res, next) {
 }
 
 app.post('/api/round-complete', requireIngestKey, async (req, res) => {
+  // Support both flat payload and Logger.Send wrapper ({ level, data: { ... } })
+  const body = req.body?.data ?? req.body;
   const {
     Round_Result, Round_AverageLevel, Round_NumberOfPlayers, Round_Game_Mode,
     Round_Map, Round_AtmosphereType, Round_DinoPlayerAverageLevel,
@@ -139,7 +142,7 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
     Round_NumPlayers_WithDinoTrackers, Round_NumPlayers_WithMines, Round_NumPlayers_WithGamepassWeapons,
     Round_DinosaursUsed, Round_VehiclesUsed, Round_WeaponsUsed,
     Round_MVP_EquippedVehicle, Round_MVP_EquippedWeapon, Round_MVP_Damage,
-  } = req.body;
+  } = body;
 
   if (!Round_Map || !Round_Result) {
     console.error('[round-complete] Missing required fields:', { Round_Map, Round_Result });
@@ -174,7 +177,7 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
     return res.status(500).json({ error: 'Failed to log round' });
   }
 
-  console.log(`[round-complete] Logged round on ${Round_Map} (${Round_Result})`);
+  console.log(`[round-complete] Logged round on ${Round_Map} (${Round_Result}) — players: ${Round_NumberOfPlayers ?? '?'}, MVP weapon: ${Round_MVP_EquippedWeapon ?? 'none'}, MVP vehicle: ${Round_MVP_EquippedVehicle ?? 'none'}`);
   res.json({ received: true });
 });
 
