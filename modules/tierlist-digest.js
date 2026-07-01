@@ -28,7 +28,6 @@ const PICKUP_FIELDS = [
   { field: 'num_players_with_toolkits',         label: 'Toolkit'         },
   { field: 'num_players_with_dinotrackers',     label: 'Dino Tracker'    },
   { field: 'num_players_with_mines',            label: 'Mine'            },
-  { field: 'num_players_with_gamepass_weapons', label: 'Gamepass Weapon' },
 ];
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
