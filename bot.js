@@ -1,6 +1,7 @@
 require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
+const fs     = require('fs');
+const path   = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const { Client, GatewayIntentBits, Collection, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
@@ -58,6 +59,7 @@ client.once('ready', () => {
   require('./modules/anomaly-alerts')(client, { supabase });
   require('./modules/balance-report')(client, { supabase });
   require('./modules/raw-data-digest')(client, { supabase });
+  require('./modules/bot-logs')(client, { supabase });
   require('./modules/bot-status')(client, { supabase });
   require('./modules/bot-errors')(client, { supabase });
 });
@@ -123,6 +125,58 @@ app.use(express.json());
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'primalgame' });
+});
+
+// ── GitHub push webhook → #primalgame-updates ────────────────────────────────
+const GITHUB_TO_DISCORD = { 'EerieIsNotUser': 'EerieIsUser' };
+const UPDATE_FEED_CH    = '1515751286312669354';
+
+app.post('/github-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig    = req.headers['x-hub-signature-256'];
+  const secret = process.env.GITHUB_WEBHOOK_SECRET;
+
+  if (secret) {
+    const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(req.body).digest('hex');
+    if (!crypto.timingSafeEqual(Buffer.from(sig ?? ''), Buffer.from(expected))) {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+  }
+
+  const payload = JSON.parse(req.body.toString());
+  if (!payload.commits?.length) return res.json({ ok: true });
+
+  const branch   = payload.ref?.replace('refs/heads/', '') ?? 'unknown';
+  const pusher   = payload.pusher?.name ?? 'Unknown';
+  const discord  = GITHUB_TO_DISCORD[pusher] ?? pusher;
+  const repoName = payload.repository?.name ?? 'primal-game';
+
+  const ch = client.channels.cache.get(UPDATE_FEED_CH)
+    ?? await client.channels.fetch(UPDATE_FEED_CH).catch(() => null);
+  if (!ch) return res.status(500).json({ error: 'Channel not found' });
+
+  for (const commit of payload.commits) {
+    const { EmbedBuilder } = require('discord.js');
+    const embed = new EmbedBuilder()
+      .setColor(0x24292e)
+      .setAuthor({
+        name:    `${discord} pushed an update`,
+        iconURL: `https://github.com/${pusher}.png`,
+      })
+      .setDescription(commit.message)
+      .setThumbnail(client.user?.displayAvatarURL({ size: 256 }) ?? null)
+      .addFields(
+        { name: 'Branch',     value: branch,   inline: true },
+        { name: 'Repository', value: repoName, inline: true },
+      )
+      .setFooter({ text: `Discord: @${discord}` })
+      .setTimestamp(new Date(commit.timestamp));
+
+    await ch.send({ embeds: [embed] }).catch(err =>
+      console.error('[github-webhook] Failed to post:', err.message)
+    );
+  }
+
+  res.json({ ok: true });
 });
 
 // Shared-secret check for any future /api/* ingestion routes.
