@@ -54,7 +54,8 @@ client.once('ready', async () => {
   console.log(`PrimalGame logged in as ${client.user.tag}`);
 
   require('./modules/map-history-digest')(client, { supabase });
-  // Manual trigger available via module.exports.postDigest(client, supabase)
+  require('./modules/tierlist-digest')(client, { supabase });
+  // Manual triggers available via module.exports.postDigest / postTierList
   require('./modules/anomaly-alerts')(client, { supabase });
   require('./modules/balance-report')(client, { supabase });
   require('./modules/raw-data-digest')(client, { supabase });

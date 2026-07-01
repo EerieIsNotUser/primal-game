@@ -964,4 +964,150 @@ async function buildPieCard({
     .toBuffer();
 }
 
-module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, bucketRoundsByMap, PALETTE, MAP_COLORS };
+/**
+ * Ranked tier list card — 10 items with rank badges, bars, and counts.
+ *
+ * @param {object} opts
+ *   title       {string}  header title
+ *   subtitle    {string}  header subtitle
+ *   stats       {Array}   up to 3 × { label, value, color? } callout boxes
+ *   lookback    {string}  footer left text
+ *   items       {Array}   [{ name, count }] sorted descending, max 10
+ *   accentColor {string}  bar fill color (default #5865F2)
+ * @returns {Promise<Buffer>} RGBA PNG with rounded corners
+ */
+async function buildTierListCard({
+  title       = '',
+  subtitle    = '',
+  stats       = [],
+  lookback    = '',
+  items       = [],
+  accentColor = '#5865F2',
+} = {}) {
+  const CARD_W   = 900;
+  const HEADER_H = 90;
+  const FOOTER_H = 40;
+  const CORNER_R = 14;
+  const ICON_SZ  = 48;
+  const ICON_X   = 14;
+  const ICON_Y   = 21;
+  const BODY_PAD = 24;
+  const ROW_H    = 44;
+  const ROW_GAP  = 6;
+
+  const capped   = items.slice(0, 10);
+  const BODY_H   = BODY_PAD + capped.length * (ROW_H + ROW_GAP) - (capped.length > 0 ? ROW_GAP : 0) + BODY_PAD;
+  const CARD_H   = HEADER_H + BODY_H + FOOTER_H;
+  const FOOTER_Y = HEADER_H + BODY_H;
+
+  // ── Icon ──────────────────────────────────────────────────────────────
+  let iconBuffer = null;
+  try {
+    const raw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
+      .resize(ICON_SZ, ICON_SZ, { fit: 'cover' }).png().toBuffer();
+    const iconMask = await sharp(Buffer.from(
+      `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">` +
+      `<rect width="${ICON_SZ}" height="${ICON_SZ}" rx="10" fill="white"/></svg>`
+    )).png().toBuffer();
+    iconBuffer = await sharp(raw).composite([{ input: iconMask, blend: 'dest-in' }]).png().toBuffer();
+  } catch (_) {}
+
+  // ── Header stat boxes ─────────────────────────────────────────────────
+  const BOX_W   = 160;
+  const BOX_H   = 62;
+  const BOX_GAP = 10;
+  const BOX_Y   = Math.round((HEADER_H - BOX_H) / 2);
+  const cappedS = stats.slice(0, 3);
+  const totalBW = cappedS.length * BOX_W + Math.max(0, cappedS.length - 1) * BOX_GAP;
+  let statBoxesSvg = '';
+  cappedS.forEach((s, i) => {
+    const bx  = CARD_W - 14 - totalBW + i * (BOX_W + BOX_GAP);
+    const col = s.color || '#5865F2';
+    statBoxesSvg += `
+      <rect x="${bx}" y="${BOX_Y}" width="${BOX_W}" height="${BOX_H}" rx="6" fill="#111214"/>
+      <circle cx="${bx + 16}" cy="${BOX_Y + 20}" r="4.5" fill="${col}"/>
+      <text x="${bx + 28}" y="${BOX_Y + 24}" fill="#b5b9bf" font-size="13" font-family="DejaVu Sans">${escapeXml(s.label)}</text>
+      <text x="${bx + 14}" y="${BOX_Y + 55}" fill="${col}" font-size="28" font-weight="bold" font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
+  });
+
+  // ── Header text ───────────────────────────────────────────────────────
+  const textX      = iconBuffer ? ICON_X + ICON_SZ + 14 : 20;
+  const titleEl    = title    ? `<text x="${textX}" y="42" fill="#e8e9eb" font-size="20" font-weight="bold" font-family="DejaVu Sans">${escapeXml(title)}</text>` : '';
+  const subtitleEl = subtitle ? `<text x="${textX}" y="63" fill="#b5b9bf" font-size="14" font-family="DejaVu Sans">${escapeXml(subtitle)}</text>` : '';
+
+  // ── Rows ──────────────────────────────────────────────────────────────
+  const bodyStartY = HEADER_H + BODY_PAD;
+  const maxCount   = capped.length > 0 ? (capped[0].count || 1) : 1;
+  const NAME_X     = BODY_PAD + 46;
+  const BAR_START  = 330;
+  const BAR_MAX_W  = CARD_W - BAR_START - BODY_PAD - 70;
+  const COUNT_X    = CARD_W - BODY_PAD;
+  const RANK_COLS  = ['#FFD700', '#C0C0C0', '#CD7F32'];
+
+  let rowsSvg = '';
+  capped.forEach((item, i) => {
+    const rowY    = bodyStartY + i * (ROW_H + ROW_GAP);
+    const barW    = Math.max(4, Math.round((item.count / maxCount) * BAR_MAX_W));
+    const rankCol = RANK_COLS[i] ?? '#4a4a4a';
+    const nameStr = item.name.length > 24 ? item.name.slice(0, 23) + '…' : item.name;
+
+    rowsSvg += `
+      <rect x="${BODY_PAD}" y="${rowY}" width="${CARD_W - 2 * BODY_PAD}" height="${ROW_H}"
+            rx="8" fill="#2b2d31" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+      <circle cx="${BODY_PAD + 18}" cy="${rowY + ROW_H / 2}" r="14" fill="${rankCol}" opacity="0.9"/>
+      <text x="${BODY_PAD + 18}" y="${rowY + ROW_H / 2 + 5}"
+            fill="${i < 3 ? '#111214' : '#e8e9eb'}" font-size="13" font-weight="bold"
+            font-family="DejaVu Sans" text-anchor="middle">${i + 1}</text>
+      <text x="${NAME_X}" y="${rowY + ROW_H / 2 + 5}"
+            fill="#e8e9eb" font-size="15" font-family="DejaVu Sans">${escapeXml(nameStr)}</text>
+      <rect x="${BAR_START}" y="${rowY + 14}" width="${BAR_MAX_W}" height="16" rx="4" fill="rgba(255,255,255,0.06)"/>
+      <rect x="${BAR_START}" y="${rowY + 14}" width="${barW}" height="16" rx="4" fill="${accentColor}" opacity="0.8"/>
+      <text x="${COUNT_X}" y="${rowY + ROW_H / 2 + 5}"
+            fill="#72767d" font-size="13" font-family="DejaVu Sans" text-anchor="end">${escapeXml(String(item.count))}x</text>`;
+  });
+
+  // ── Footer ────────────────────────────────────────────────────────────
+  const ftY        = FOOTER_Y + 26;
+  const footerLeft = lookback
+    ? `<text x="20" y="${ftY}" fill="#72767d" font-size="13" font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>`
+    : '';
+  const footerRight = `
+    <rect x="${CARD_W - 118}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
+    <text x="${CARD_W - 104}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="middle">PG</text>
+    <text x="${CARD_W - 84}" y="${ftY}" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans">PrimalGame</text>`;
+
+  // ── Card SVG ──────────────────────────────────────────────────────────
+  const cardSvg = `
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${HEADER_H}" fill="#1e2024"/>
+  <rect y="${HEADER_H}" width="${CARD_W}" height="${BODY_H}" fill="#15171a"/>
+  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#0e0f11"/>
+  <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  ${statBoxesSvg}
+  ${titleEl}
+  ${subtitleEl}
+  ${rowsSvg}
+  ${footerLeft}
+  ${footerRight}
+</svg>`;
+
+  // ── Composite + rounded corners ───────────────────────────────────────
+  const composites = [];
+  if (iconBuffer) composites.push({ input: iconBuffer, top: ICON_Y, left: ICON_X });
+
+  const flat = composites.length > 0
+    ? await sharp(Buffer.from(cardSvg)).composite(composites).png().toBuffer()
+    : await sharp(Buffer.from(cardSvg)).png().toBuffer();
+
+  const maskBuffer = await sharp(Buffer.from(`
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${CARD_H}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
+</svg>`)).png().toBuffer();
+
+  return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
+}
+
+module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, bucketRoundsByMap, PALETTE, MAP_COLORS };
