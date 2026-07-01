@@ -239,23 +239,34 @@ async function postBatchSummary(rows) {
     const lastRound  = new Date(rows[rows.length - 1].played_at);
     const dateRange  = `${firstRound.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${lastRound.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
-    const embed = new EmbedBuilder()
-      .setColor(0x5865F2)
-      .setTitle(`${SUMMARY_BATCH_SIZE} Rounds Logged`)
-      .setDescription(dateRange)
-      .addFields(
-        { name: 'Win Rate',        value: `Dino ${dinoWinPct}% / Survivor ${100 - dinoWinPct}%`, inline: true },
-        { name: 'Dino Wins',       value: dinoWins.toString(),                                     inline: true },
-        { name: 'Survivor Wins',   value: survivorWins.toString(),                                 inline: true },
-        { name: 'Top Map',         value: topMap     ? `${topMap[0]} (${topMap[1]}x)`       : '—', inline: true },
-        { name: 'Top MVP Weapon',  value: topWeapon  ? `${topWeapon[0]} (${topWeapon[1]}x)` : '—', inline: true },
-        { name: 'Top MVP Vehicle', value: topVehicle ? `${topVehicle[0]} (${topVehicle[1]}x)` : '—', inline: true },
-        { name: 'Top Dino Used',   value: topDino    ? `${topDino[0]} (${topDino[1]}x)`     : '—', inline: true },
-      )
-      .setFooter({ text: `PrimalGame · ${SUMMARY_BATCH_SIZE}-round batch summary` })
-      .setTimestamp();
+    // ── Stat card ─────────────────────────────────────────────────────────
+    const { buildStatCard } = require('./modules/chart');
 
-    // Raw data attachment
+    const winColorHex = dinoWinPct >= 60 ? '#ED4245' : (100 - dinoWinPct) >= 60 ? '#57F287' : '#FEE75C';
+
+    const cardBuffer = await buildStatCard({
+      title:    `${SUMMARY_BATCH_SIZE} Rounds Logged`,
+      subtitle: `Primal Pursuit · ${dateRange}`,
+      stats: [
+        { label: 'Total Rounds',  value: rows.length.toLocaleString(),  color: '#5865F2' },
+        { label: 'Dino Win',      value: `${dinoWinPct}%`,              color: '#ED4245' },
+        { label: 'Survivor Win',  value: `${100 - dinoWinPct}%`,        color: '#57F287' },
+      ],
+      lookback: dateRange,
+      panels: [
+        { title: 'Top Map',         lines: [topMap     ? `${topMap[0]} (${topMap[1]}x)`         : '—'] },
+        { title: 'Top MVP Weapon',  lines: [topWeapon  ? `${topWeapon[0]} (${topWeapon[1]}x)`   : '—'] },
+        { title: 'Top MVP Vehicle', lines: [topVehicle ? `${topVehicle[0]} (${topVehicle[1]}x)` : '—'] },
+        { title: 'Top Dino Used',   lines: [topDino    ? `${topDino[0]} (${topDino[1]}x)`       : '—'] },
+      ],
+      note: winColorHex === '#ED4245'
+        ? `Dinos are winning ${dinoWinPct}% of rounds this batch — significantly above average.`
+        : winColorHex === '#57F287'
+        ? `Survivors are winning ${100 - dinoWinPct}% of rounds this batch — significantly above average.`
+        : '',
+    });
+
+    // ── Raw data attachment ───────────────────────────────────────────────
     const COLS = [
       { key: 'played_at',            label: 'Played At',   width: 20 },
       { key: 'map',                  label: 'Map',         width: 14 },
@@ -275,10 +286,11 @@ async function postBatchSummary(rows) {
     }).join(' | '));
     const table      = [header, separator, ...lines].join('\n');
     const attachment = new AttachmentBuilder(Buffer.from(table, 'utf8'), { name: `rounds-batch-${Date.now()}.txt` });
+    const cardAttachment = new AttachmentBuilder(cardBuffer, { name: 'batch-summary.png' });
 
     const ch = client.channels.cache.get(SUMMARY_CHANNEL_ID)
       ?? await client.channels.fetch(SUMMARY_CHANNEL_ID).catch(() => null);
-    if (ch) await ch.send({ embeds: [embed], files: [attachment] });
+    if (ch) await ch.send({ files: [cardAttachment, attachment] });
 
     console.log(`[round-complete] ${SUMMARY_BATCH_SIZE}-round batch summary posted.`);
 
