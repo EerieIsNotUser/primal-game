@@ -55,6 +55,8 @@ function aggregateWinRates(rows, field) {
 }
 
 async function runAnomalyCheck(client, supabase) {
+  // Paused until September 1st 2026 — insufficient data for meaningful anomaly detection
+  if (new Date() < new Date('2026-09-01T00:00:00Z')) return;
   const { high, low } = getThresholds();
 
   // Fetch last SAMPLE_SIZE rounds
