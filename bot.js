@@ -147,8 +147,8 @@ app.post('/github-webhook', express.raw({ type: '*/*' }), async (req, res) => {
   const discord  = ({ 'EerieIsNotUser': 'EerieIsUser' })[pusher] ?? pusher;
   const repoName = payload.repository?.name ?? 'primal-game';
 
-  const ch = client.channels.cache.get('1515751286312669354')
-    ?? await client.channels.fetch('1515751286312669354').catch(() => null);
+  const ch = client.channels.cache.get('1521953811428671568')
+    ?? await client.channels.fetch('1521953811428671568').catch(() => null);
   if (!ch) return res.status(500).json({ error: 'Channel not found' });
 
   for (const commit of payload.commits) {
