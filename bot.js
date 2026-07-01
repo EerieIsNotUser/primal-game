@@ -3,7 +3,6 @@ const fs     = require('fs');
 const path   = require('path');
 const express = require('express');
 const { Client, GatewayIntentBits, Collection, EmbedBuilder, AttachmentBuilder } = require('discord.js');
-const { execSync } = require('child_process');
 const { createClient } = require('@supabase/supabase-js');
 
 // ── Supabase ─────────────────────────────────────────────────────────────────
@@ -63,34 +62,6 @@ client.once('ready', async () => {
   require('./modules/bot-status')(client, { supabase });
   require('./modules/bot-errors')(client, { supabase });
 
-  // ── Deployment update feed ─────────────────────────────────────────────
-  try {
-    const commitMsg  = execSync('git log -1 --format=%s').toString().trim();
-    const commitHash = execSync('git log -1 --format=%h').toString().trim();
-    const commitDate = execSync('git log -1 --format=%ci').toString().trim();
-
-    const feedCh = client.channels.cache.get('1515751286312669354')
-      ?? await client.channels.fetch('1515751286312669354').catch(() => null);
-
-    if (feedCh && commitMsg) {
-      const deployEmbed = new EmbedBuilder()
-        .setColor(0x24292e)
-        .setAuthor({
-          name:    'EerieIsUser pushed an update',
-          iconURL: 'https://github.com/EerieIsNotUser.png',
-        })
-        .setDescription(commitMsg)
-        .setThumbnail(client.user.displayAvatarURL({ size: 256 }))
-        .addFields(
-          { name: 'Branch',     value: 'main',         inline: true },
-          { name: 'Repository', value: 'primal-game',  inline: true },
-        )
-        .setFooter({ text: `Discord: @EerieIsUser · ${commitHash}` })
-        .setTimestamp(new Date(commitDate));
-
-      await feedCh.send({ embeds: [deployEmbed] }).catch(() => {});
-    }
-  } catch (_) {}
 });
 
 client.on('interactionCreate', async interaction => {
@@ -149,7 +120,61 @@ client.login(process.env.DISCORD_TOKEN?.trim());
 // Roblox (via KKG's script) will POST round-complete payloads here once the
 // payload shape is finalized. For now this is just a health check + stub so
 // the Express server has somewhere to live from day one.
-const app = express();
+const crypto = require('crypto');
+const app    = express();
+
+// ── GitHub push webhook (must be BEFORE express.json()) ───────────────────────
+app.post('/github-webhook', express.raw({ type: '*/*' }), async (req, res) => {
+  const sig    = req.headers['x-hub-signature-256'];
+  const secret = process.env.GITHUB_WEBHOOK_SECRET;
+
+  if (secret && sig) {
+    const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(req.body).digest('hex');
+    try {
+      if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+        return res.status(401).json({ error: 'Invalid signature' });
+      }
+    } catch {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+  }
+
+  const payload = JSON.parse(req.body.toString());
+  if (!payload.commits?.length) return res.json({ ok: true });
+
+  const branch   = payload.ref?.replace('refs/heads/', '') ?? 'unknown';
+  const pusher   = payload.pusher?.name ?? 'Unknown';
+  const discord  = ({ 'EerieIsNotUser': 'EerieIsUser' })[pusher] ?? pusher;
+  const repoName = payload.repository?.name ?? 'primal-game';
+
+  const ch = client.channels.cache.get('1515751286312669354')
+    ?? await client.channels.fetch('1515751286312669354').catch(() => null);
+  if (!ch) return res.status(500).json({ error: 'Channel not found' });
+
+  for (const commit of payload.commits) {
+    const embed = new EmbedBuilder()
+      .setColor(0x24292e)
+      .setAuthor({
+        name:    `${discord} pushed an update`,
+        iconURL: `https://github.com/${pusher}.png`,
+      })
+      .setDescription(commit.message)
+      .setThumbnail(client.user?.displayAvatarURL({ size: 256 }) ?? null)
+      .addFields(
+        { name: 'Branch',     value: branch,   inline: true },
+        { name: 'Repository', value: repoName, inline: true },
+      )
+      .setFooter({ text: `Discord: @${discord}` })
+      .setTimestamp(new Date(commit.timestamp));
+
+    await ch.send({ embeds: [embed] }).catch(err =>
+      console.error('[github-webhook] Failed to post:', err.message)
+    );
+  }
+
+  res.json({ ok: true });
+});
+
 app.use(express.json());
 
 app.get('/health', (req, res) => {
