@@ -294,7 +294,7 @@ const ALL_MAPS            = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
 
 async function postWinRateUpdate(rows) {
   try {
-    const { buildStatCard } = require('./modules/chart');
+    const { buildWinRateDashboard } = require('./modules/chart');
 
     const winRateCh = client.channels.cache.get(WIN_RATE_CHANNEL_ID)
       ?? await client.channels.fetch(WIN_RATE_CHANNEL_ID).catch(() => null);
@@ -304,45 +304,33 @@ async function postWinRateUpdate(rows) {
     const lastRound  = new Date(rows[rows.length - 1].played_at);
     const dateRange  = `${firstRound.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${lastRound.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
-    for (const map of ALL_MAPS) {
-      const mapRows      = rows.filter(r => r.map === map);
-      if (mapRows.length === 0) continue;
+    const totalDinoWins     = rows.filter(r => r.round_result === 'DinoWin').length;
+    const totalDinoWinPct   = Math.round((totalDinoWins / rows.length) * 100);
 
-      const dinoWins     = mapRows.filter(r => r.round_result === 'DinoWin').length;
-      const survivorWins = mapRows.filter(r => r.round_result === 'SurvivorWin').length;
-      const dinoWinPct   = Math.round((dinoWins / mapRows.length) * 100);
-      const survWinPct   = 100 - dinoWinPct;
+    const mapData = ALL_MAPS.map(name => {
+      const mapRows     = rows.filter(r => r.map === name);
+      const dinoWins    = mapRows.filter(r => r.round_result === 'DinoWin').length;
+      const survivorWins = mapRows.length - dinoWins;
+      return { name, rounds: mapRows.length, dinoWins, survivorWins };
+    });
 
-      const winColorHex = dinoWinPct >= 60 ? '#ED4245'
-        : survWinPct >= 60 ? '#57F287'
-        : '#FEE75C';
+    const dashboardBuffer = await buildWinRateDashboard({
+      title:    'Win Rate by Map',
+      subtitle: `Primal Pursuit · ${SUMMARY_BATCH_SIZE}-Round Batch · ${dateRange}`,
+      stats: [
+        { label: 'Total Rounds',   value: rows.length.toLocaleString(),   color: '#5865F2' },
+        { label: 'Overall Dino',   value: `${totalDinoWinPct}%`,          color: '#ED4245' },
+        { label: 'Overall Surv.',  value: `${100 - totalDinoWinPct}%`,    color: '#57F287' },
+      ],
+      lookback: dateRange,
+      maps:     mapData,
+    });
 
-      const cardBuffer = await buildStatCard({
-        title:    map,
-        subtitle: `Win Rate · ${SUMMARY_BATCH_SIZE}-Round Batch · ${dateRange}`,
-        stats: [
-          { label: 'Rounds',       value: mapRows.length.toLocaleString(), color: '#5865F2'   },
-          { label: 'Dino Win',     value: `${dinoWinPct}%`,                color: '#ED4245'   },
-          { label: 'Survivor Win', value: `${survWinPct}%`,                color: '#57F287'   },
-        ],
-        lookback: dateRange,
-        panels: [
-          { title: 'Dino Wins',     lines: [`${dinoWins} rounds (${dinoWinPct}%)`],     color: '#ED4245' },
-          { title: 'Survivor Wins', lines: [`${survivorWins} rounds (${survWinPct}%)`], color: '#57F287' },
-        ],
-        note: dinoWinPct >= 60
-          ? `Dinos are winning significantly more than survivors on ${map} this batch.`
-          : survWinPct >= 60
-          ? `Survivors are winning significantly more than dinos on ${map} this batch.`
-          : '',
-      });
+    await winRateCh.send({
+      files: [new AttachmentBuilder(dashboardBuffer, { name: 'winrate-dashboard.png' })],
+    }).catch(err => console.error('[win-rate] Failed to post dashboard:', err.message));
 
-      await winRateCh.send({
-        files: [new AttachmentBuilder(cardBuffer, { name: `winrate-${map.replace(/\s+/g, '-').toLowerCase()}.png` })],
-      }).catch(err => console.error(`[win-rate] Failed to post ${map}:`, err.message));
-    }
-
-    console.log('[win-rate] Posted map win-rate cards.');
+    console.log('[win-rate] Posted win-rate dashboard.');
   } catch (err) {
     console.error('[win-rate] Post failed:', err.message);
   }

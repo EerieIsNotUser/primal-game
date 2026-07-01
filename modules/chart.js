@@ -1113,4 +1113,176 @@ async function buildTierListCard({
   return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
 }
 
-module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, bucketRoundsByMap, PALETTE, MAP_COLORS };
+/**
+ * Single wide dashboard showing win rates for all four maps in a 2×2 grid.
+ * Replaces the four separate stat cards in the win-rate channel.
+ *
+ * @param {object} opts
+ *   title    {string}  header title
+ *   subtitle {string}  header subtitle
+ *   stats    {Array}   up to 3 × { label, value, color? } callout boxes
+ *   lookback {string}  footer left text
+ *   maps     {Array}   [{ name, rounds, dinoWins, survivorWins }]
+ * @returns {Promise<Buffer>} RGBA PNG with rounded corners
+ */
+async function buildWinRateDashboard({
+  title    = 'Win Rate by Map',
+  subtitle = '',
+  stats    = [],
+  lookback = '',
+  maps     = [],
+} = {}) {
+  const CARD_W   = 1200;
+  const HEADER_H = 90;
+  const FOOTER_H = 40;
+  const BODY_H   = 520;
+  const CORNER_R = 14;
+  const ICON_SZ  = 48;
+  const ICON_X   = 14;
+  const ICON_Y   = 21;
+  const BODY_PAD = 24;
+  const MAP_GAP  = 16;
+
+  const CARD_H   = HEADER_H + BODY_H + FOOTER_H;
+  const FOOTER_Y = HEADER_H + BODY_H;
+  const PANEL_W  = Math.floor((CARD_W - 2 * BODY_PAD - MAP_GAP) / 2);
+  const PANEL_H  = Math.floor((BODY_H - 2 * BODY_PAD - MAP_GAP) / 2);
+
+  const POSITIONS = [
+    { x: BODY_PAD,                  y: HEADER_H + BODY_PAD                  },
+    { x: BODY_PAD + PANEL_W + MAP_GAP, y: HEADER_H + BODY_PAD               },
+    { x: BODY_PAD,                  y: HEADER_H + BODY_PAD + PANEL_H + MAP_GAP },
+    { x: BODY_PAD + PANEL_W + MAP_GAP, y: HEADER_H + BODY_PAD + PANEL_H + MAP_GAP },
+  ];
+
+  // ── Icon ──────────────────────────────────────────────────────────────
+  let iconBuffer = null;
+  try {
+    const raw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
+      .resize(ICON_SZ, ICON_SZ, { fit: 'cover' }).png().toBuffer();
+    const iconMask = await sharp(Buffer.from(
+      `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">` +
+      `<rect width="${ICON_SZ}" height="${ICON_SZ}" rx="10" fill="white"/></svg>`
+    )).png().toBuffer();
+    iconBuffer = await sharp(raw).composite([{ input: iconMask, blend: 'dest-in' }]).png().toBuffer();
+  } catch (_) {}
+
+  // ── Header stat boxes ─────────────────────────────────────────────────
+  const BOX_W   = 160;
+  const BOX_H   = 62;
+  const BOX_GAP = 10;
+  const BOX_Y   = Math.round((HEADER_H - BOX_H) / 2);
+  const cappedS = stats.slice(0, 3);
+  const totalBW = cappedS.length * BOX_W + Math.max(0, cappedS.length - 1) * BOX_GAP;
+  let statBoxesSvg = '';
+  cappedS.forEach((s, i) => {
+    const bx  = CARD_W - 14 - totalBW + i * (BOX_W + BOX_GAP);
+    const col = s.color || '#5865F2';
+    statBoxesSvg += `
+      <rect x="${bx}" y="${BOX_Y}" width="${BOX_W}" height="${BOX_H}" rx="6" fill="#111214"/>
+      <circle cx="${bx + 16}" cy="${BOX_Y + 20}" r="4.5" fill="${col}"/>
+      <text x="${bx + 28}" y="${BOX_Y + 24}" fill="#b5b9bf" font-size="13" font-family="DejaVu Sans">${escapeXml(s.label)}</text>
+      <text x="${bx + 14}" y="${BOX_Y + 55}" fill="${col}" font-size="28" font-weight="bold" font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
+  });
+
+  // ── Header text ───────────────────────────────────────────────────────
+  const textX      = iconBuffer ? ICON_X + ICON_SZ + 14 : 20;
+  const titleEl    = title    ? `<text x="${textX}" y="42" fill="#e8e9eb" font-size="20" font-weight="bold" font-family="DejaVu Sans">${escapeXml(title)}</text>` : '';
+  const subtitleEl = subtitle ? `<text x="${textX}" y="63" fill="#b5b9bf" font-size="14" font-family="DejaVu Sans">${escapeXml(subtitle)}</text>` : '';
+
+  // ── Map panels ────────────────────────────────────────────────────────
+  let panelsSvg = '';
+  const BAR_H   = 18;
+  const BAR_PAD = 20;
+  const BAR_W   = PANEL_W - BAR_PAD * 2;
+  const BAR_Y   = PANEL_H - 44;
+  const HALF_W  = Math.floor(PANEL_W / 2);
+
+  maps.slice(0, 4).forEach((map, i) => {
+    const { x: px, y: py } = POSITIONS[i];
+    const mapColor      = MAP_COLORS[map.name] ?? '#5865F2';
+    const total         = map.rounds || 1;
+    const dinoWinPct    = Math.round((map.dinoWins / total) * 100);
+    const survivorWinPct = 100 - dinoWinPct;
+    const dinoBarW      = Math.round((map.dinoWins / total) * BAR_W);
+    const survivorBarW  = BAR_W - dinoBarW;
+
+    panelsSvg += `
+      <rect x="${px}" y="${py}" width="${PANEL_W}" height="${PANEL_H}"
+            rx="8" fill="#111214" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+      <rect x="${px}" y="${py}" width="6" height="${PANEL_H}" rx="2" fill="${mapColor}"/>
+
+      <text x="${px + 22}" y="${py + 30}"
+            fill="${mapColor}" font-size="20" font-weight="bold"
+            font-family="DejaVu Sans">${escapeXml(map.name)}</text>
+      <text x="${px + 22}" y="${py + 50}"
+            fill="#72767d" font-size="13"
+            font-family="DejaVu Sans">${map.rounds.toLocaleString()} rounds</text>
+      <line x1="${px + 16}" y1="${py + 62}" x2="${px + PANEL_W - 16}" y2="${py + 62}"
+            stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+
+      <text x="${px + 22}" y="${py + 84}"
+            fill="#9b9ea4" font-size="13" font-family="DejaVu Sans">Dino Win</text>
+      <text x="${px + HALF_W + 8}" y="${py + 84}"
+            fill="#9b9ea4" font-size="13" font-family="DejaVu Sans">Survivor Win</text>
+
+      <text x="${px + 22}" y="${py + 148}"
+            fill="#ED4245" font-size="56" font-weight="bold"
+            font-family="DejaVu Sans">${dinoWinPct}%</text>
+      <text x="${px + HALF_W + 8}" y="${py + 148}"
+            fill="#57F287" font-size="56" font-weight="bold"
+            font-family="DejaVu Sans">${survivorWinPct}%</text>
+
+      <rect x="${px + BAR_PAD}" y="${py + BAR_Y}" width="${BAR_W}" height="${BAR_H}"
+            rx="5" fill="rgba(255,255,255,0.06)"/>
+      <rect x="${px + BAR_PAD}" y="${py + BAR_Y}" width="${dinoBarW}" height="${BAR_H}"
+            rx="5" fill="#ED4245" opacity="0.8"/>
+      <rect x="${px + BAR_PAD + dinoBarW}" y="${py + BAR_Y}" width="${survivorBarW}" height="${BAR_H}"
+            rx="5" fill="#57F287" opacity="0.8"/>`;
+  });
+
+  // ── Footer ────────────────────────────────────────────────────────────
+  const ftY        = FOOTER_Y + 26;
+  const footerLeft = lookback
+    ? `<text x="20" y="${ftY}" fill="#72767d" font-size="13" font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>`
+    : '';
+  const footerRight = `
+    <rect x="${CARD_W - 118}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
+    <text x="${CARD_W - 104}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="middle">PG</text>
+    <text x="${CARD_W - 84}" y="${ftY}" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans">PrimalGame</text>`;
+
+  // ── Card SVG ──────────────────────────────────────────────────────────
+  const cardSvg = `
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${HEADER_H}" fill="#1e2024"/>
+  <rect y="${HEADER_H}" width="${CARD_W}" height="${BODY_H}" fill="#15171a"/>
+  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#0e0f11"/>
+  <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  ${statBoxesSvg}
+  ${titleEl}
+  ${subtitleEl}
+  ${panelsSvg}
+  ${footerLeft}
+  ${footerRight}
+</svg>`;
+
+  // ── Composite + rounded corners ───────────────────────────────────────
+  const composites = [];
+  if (iconBuffer) composites.push({ input: iconBuffer, top: ICON_Y, left: ICON_X });
+
+  const flat = composites.length > 0
+    ? await sharp(Buffer.from(cardSvg)).composite(composites).png().toBuffer()
+    : await sharp(Buffer.from(cardSvg)).png().toBuffer();
+
+  const maskBuffer = await sharp(Buffer.from(`
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${CARD_H}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
+</svg>`)).png().toBuffer();
+
+  return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
+}
+
+module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, bucketRoundsByMap, PALETTE, MAP_COLORS };
