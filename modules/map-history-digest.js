@@ -1,262 +1,232 @@
-// ─── Weekly map-history digest (v2 — rebuilt for round-level schema) ───────
-// Posts a weekly summary to #map-history using only round-level data:
-// map popularity, round_result split, item adoption rates, MVP frequency.
-// No per-player data exists in this schema — this is intentionally aggregate-only.
+// ─── Map History Digest ───────────────────────────────────────────────────────
+// Posts a map distribution pie card + map popularity line chart to #map-history
+// every Sunday at midnight US Eastern time.
+//
+// Tier priority — highest due tier wins, lower tiers are skipped that week:
+//   Yearly    ≥ 365 days since last yearly post  (~52 weeks)
+//   Quarterly ≥ 91  days since last quarterly    (~13 weeks)
+//   Monthly   ≥ 28  days since last monthly      (~4  weeks)
+//   Weekly    always (fallback)
+//
+// NOTE: Monthly, quarterly, and yearly digests can also be triggered manually
+// via a planned /maphistory [period] command. Lower tiers skipped this week
+// are NOT lost — they're simply superseded by the higher tier's broader view.
 
-const { EmbedBuilder } = require('discord.js');
+const { AttachmentBuilder } = require('discord.js');
+const {
+  buildPieCard,
+  buildLineChartImage,
+  buildChartCard,
+  bucketRoundsByMap,
+  MAP_COLORS,
+} = require('./chart');
 
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const POST_ID = 'map-history-weekly';
-const CHANNEL_ID = process.env.MAP_HISTORY_CHANNEL_ID;
+const CHANNEL_ID = '1515750144618795208';
 
-function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+const TIERS = [
+  { key: 'yearly',    label: 'Yearly',    minDays: 365 },
+  { key: 'quarterly', label: 'Quarterly', minDays: 91  },
+  { key: 'monthly',   label: 'Monthly',   minDays: 28  },
+  { key: 'weekly',    label: 'Weekly',    minDays: 0   },
+];
+
+// ── Scheduler ─────────────────────────────────────────────────────────────────
+// Returns ms until next Sunday midnight in America/New_York (DST-aware).
+function getMsUntilNextSundayMidnightNY() {
+  const now = new Date();
+
+  for (let i = 1; i <= 8; i++) {
+    const candidate = new Date(now.getTime() + i * 24 * 60 * 60 * 1000);
+    const dayInNY = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      weekday: 'short',
+    }).format(candidate);
+
+    if (dayInNY !== 'Sun') continue;
+
+    // Detect UTC offset for that date by checking what NY hour noon-UTC maps to
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(candidate);
+
+    const yr  = parts.find(p => p.type === 'year').value;
+    const mo  = parts.find(p => p.type === 'month').value;
+    const dy  = parts.find(p => p.type === 'day').value;
+
+    const noonUTC   = new Date(`${yr}-${mo}-${dy}T12:00:00Z`);
+    const noonNYHr  = parseInt(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', hour: 'numeric', hour12: false,
+    }).format(noonUTC));
+    const offsetHrs = 12 - noonNYHr; // e.g. 4 for EDT, 5 for EST
+
+    const midnightUTC = new Date(`${yr}-${mo}-${dy}T${String(offsetHrs).padStart(2, '0')}:00:00Z`);
+    const ms = midnightUTC.getTime() - now.getTime();
+    if (ms > 0) return ms;
+  }
+
+  return 7 * 24 * 60 * 60 * 1000; // fallback
 }
 
-async function getWeeklyRounds(supabase) {
-  const cutoff = new Date(Date.now() - WEEK_MS);
+// ── Tier determination ────────────────────────────────────────────────────────
+async function determineTier(supabase) {
+  const now = Date.now();
 
+  for (const tier of TIERS) {
+    if (tier.minDays === 0) return tier; // weekly always qualifies
+
+    const { data } = await supabase
+      .from('primalgame_state')
+      .select('value')
+      .eq('key', `maphistory_${tier.key}_at`)
+      .single();
+
+    const lastAt  = data?.value ? new Date(data.value).getTime() : 0;
+    const daysSince = (now - lastAt) / (24 * 60 * 60 * 1000);
+
+    if (daysSince >= tier.minDays) return tier;
+  }
+
+  return TIERS[TIERS.length - 1]; // weekly fallback
+}
+
+// ── Data fetching ─────────────────────────────────────────────────────────────
+async function fetchRoundsForPeriod(supabase, days) {
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const { data, error } = await supabase
     .from('round_logs')
-    .select('map, round_result, num_players_with_medkits, num_players_with_toolkits, num_players_with_fuelcans, num_players_with_dinotrackers, num_players_with_mines, num_players_with_gamepass_weapons, number_of_players, mvp_equipped_vehicle, mvp_equipped_weapon')
-    .gte('played_at', cutoff.toISOString());
+    .select('map, round_result, played_at')
+    .gte('played_at', cutoff.toISOString())
+    .order('played_at', { ascending: true });
 
   if (error || !data) return null;
   return data;
 }
 
-async function getPriorWeekMapCounts(supabase) {
-  const now = Date.now();
-  const start = new Date(now - 2 * WEEK_MS);
-  const end = new Date(now - WEEK_MS);
-
-  const { data, error } = await supabase
-    .from('round_logs')
-    .select('map')
-    .gte('played_at', start.toISOString())
-    .lt('played_at', end.toISOString());
-
-  if (error || !data) return null;
-
-  const counts = new Map();
-  for (const row of data) {
-    if (!row.map) continue;
-    counts.set(row.map, (counts.get(row.map) || 0) + 1);
+// ── Chart builders ────────────────────────────────────────────────────────────
+async function buildDistributionCard(rows, tierLabel, days) {
+  const mapCounts = new Map();
+  for (const r of rows) {
+    if (!r.map) continue;
+    mapCounts.set(r.map, (mapCounts.get(r.map) || 0) + 1);
   }
-  return counts;
+
+  const segments = [...mapCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, value]) => ({ label, value, color: MAP_COLORS[label] }));
+
+  const totalRounds = rows.length;
+
+  const buf = await buildPieCard({
+    title:       'Map Distribution',
+    subtitle:    `Primal Pursuit · ${tierLabel} Overview`,
+    stats: [
+      { label: 'Total Rounds', value: totalRounds.toLocaleString(), color: '#5865F2' },
+      { label: 'Maps',         value: segments.length.toString(),   color: '#57F287' },
+    ],
+    lookback:    `Past ${days} Days`,
+    segments,
+    centerLabel: `${totalRounds.toLocaleString()}\nrounds`,
+  });
+
+  return new AttachmentBuilder(buf, { name: 'map-distribution.png' });
 }
 
-function rankByField(rows, field) {
-  const counts = new Map();
-  for (const row of rows) {
-    const val = row[field];
-    if (!val) continue;
-    counts.set(val, (counts.get(val) || 0) + 1);
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+async function buildPopularityCard(rows, tierLabel, days) {
+  const endDate   = new Date();
+  const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // Use hourly buckets for weekly, daily for longer periods
+  const bucketMs = days <= 7
+    ? 60 * 60 * 1000
+    : days <= 31
+      ? 24 * 60 * 60 * 1000
+      : 7 * 24 * 60 * 60 * 1000; // weekly buckets for quarterly/yearly
+
+  const { labels, series } = bucketRoundsByMap(rows, startDate, endDate, bucketMs);
+  if (!series.length) return null;
+
+  const coloredSeries = series.map(s => ({ ...s, color: MAP_COLORS[s.label] ?? s.color }));
+  const chartBuf = await buildLineChartImage(labels, coloredSeries, null);
+
+  const buf = await buildChartCard(chartBuf, {
+    title:    'Map Popularity',
+    subtitle: `Primal Pursuit · ${tierLabel} Overview`,
+    stats: [
+      { label: 'Total Rounds', value: rows.length.toLocaleString(), color: '#5865F2' },
+      { label: 'Maps',         value: series.length.toString(),     color: '#57F287' },
+    ],
+    lookback: `Past ${days} Days`,
+  });
+
+  return new AttachmentBuilder(buf, { name: 'map-popularity.png' });
 }
 
-const BAR_LENGTH = 14;
+// ── Post digest ───────────────────────────────────────────────────────────────
+async function postDigest(client, supabase) {
+  const tier = await determineTier(supabase);
+  const days = tier.minDays || 7;
 
-function makeBar(value, max) {
-  const filled = max > 0 ? Math.round((value / max) * BAR_LENGTH) : 0;
-  return '█'.repeat(Math.max(0, filled)) + '░'.repeat(BAR_LENGTH - Math.max(0, filled));
-}
-
-function topN(countList, n = 3) {
-  return countList.slice(0, n);
-}
-
-// Build embed with MVP weapon/vehicle frequency this week
-function buildMvpEmbed(rows) {
-  const embed = new EmbedBuilder()
-    .setColor(0x5865F2)
-    .setTitle('🏆 MVP Frequency This Week')
-    .setFooter({ text: 'PrimalGame · all servers · top 3 per category' })
-    .setTimestamp();
-
-  const weaponRanks = topN(rankByField(rows, 'mvp_equipped_weapon'), 3);
-  const vehicleRanks = topN(rankByField(rows, 'mvp_equipped_vehicle'), 3);
-
-  for (const [label, ranks, emoji] of [
-    ['Weapons', weaponRanks, '🔫'],
-    ['Vehicles', vehicleRanks, '🚗'],
-  ]) {
-    if (ranks.length === 0) {
-      embed.addFields({ name: `${emoji} ${label}`, value: 'No MVP data this week.', inline: false });
-      continue;
-    }
-    const max = ranks[0][1];
-    const lines = ranks.map(([name, count]) => `\`${makeBar(count, max)}\` ${name} (MVP ${count}x)`);
-    embed.addFields({ name: `${emoji} ${label}`, value: lines.join('\n'), inline: false });
-  }
-
-  return embed;
-}
-
-// Build item adoption rate embed — % of average players per round bringing each item
-function buildItemAdoptionEmbed(rows) {
-  if (rows.length === 0) {
-    return new EmbedBuilder()
-      .setColor(0x57F287)
-      .setTitle('🎒 Item Adoption This Week')
-      .setDescription('No rounds logged this week.')
-      .setFooter({ text: 'PrimalGame' });
-  }
-
-  const totals = {
-    medkits: 0, toolkits: 0, fuelcans: 0, dinotrackers: 0, mines: 0, gamepassWeapons: 0,
-  };
-  let totalPlayers = 0;
-
-  for (const row of rows) {
-    totals.medkits += row.num_players_with_medkits || 0;
-    totals.toolkits += row.num_players_with_toolkits || 0;
-    totals.fuelcans += row.num_players_with_fuelcans || 0;
-    totals.dinotrackers += row.num_players_with_dinotrackers || 0;
-    totals.mines += row.num_players_with_mines || 0;
-    totals.gamepassWeapons += row.num_players_with_gamepass_weapons || 0;
-    totalPlayers += row.number_of_players || 0;
-  }
-
-  const pct = (val) => totalPlayers > 0 ? ((val / totalPlayers) * 100).toFixed(1) : '0.0';
-
-  const lines = [
-    `🩹 Med Kits: **${pct(totals.medkits)}%** of players`,
-    `🔧 Toolkits: **${pct(totals.toolkits)}%** of players`,
-    `⛽ Fuel Cans: **${pct(totals.fuelcans)}%** of players`,
-    `📡 Dino Trackers: **${pct(totals.dinotrackers)}%** of players`,
-    `💣 Mines: **${pct(totals.mines)}%** of players`,
-    `💎 Gamepass Weapons: **${pct(totals.gamepassWeapons)}%** of players`,
-  ];
-
-  return new EmbedBuilder()
-    .setColor(0x57F287)
-    .setTitle('🎒 Item Adoption This Week')
-    .setDescription(lines.join('\n'))
-    .setFooter({ text: 'PrimalGame · % of total players across all rounds' })
-    .setTimestamp();
-}
-
-function writeDigest(rows, priorMapCounts) {
-  if (rows.length === 0) {
-    return "Not much to report this week — no rounds logged, so map history is quiet.";
-  }
-
-  const mapRanks = topN(rankByField(rows, 'map'), 10);
-  const [topMap, topCount] = mapRanks[0];
-  const total = rows.length;
-  const topPct = ((topCount / total) * 100).toFixed(0);
-
-  const lines = [];
-  const openers = [
-    `${topMap} was the map of choice this week`,
-    `${topMap} took the top spot this week`,
-    `${topMap} saw the most action this week`,
-  ];
-  lines.push(`${pick(openers)}, showing up in ${topCount} of ${total} rounds (about ${topPct}%).`);
-
-  if (mapRanks.length > 1) {
-    const [secondMap, secondCount] = mapRanks[1];
-    if (topCount - secondCount <= Math.max(2, topCount * 0.15)) {
-      lines.push(`${secondMap} wasn't far behind with ${secondCount}.`);
-    } else {
-      lines.push(`${secondMap} came in second with ${secondCount}, a fair bit back.`);
-    }
-  }
-
-  if (priorMapCounts && priorMapCounts.size > 0) {
-    let biggestMover = null;
-    for (const [map, count] of mapRanks) {
-      const priorCount = priorMapCounts.get(map) || 0;
-      const diff = count - priorCount;
-      if (!biggestMover || Math.abs(diff) > Math.abs(biggestMover.diff)) {
-        biggestMover = { map, diff };
-      }
-    }
-    if (biggestMover && biggestMover.diff >= 2) {
-      lines.push(`${biggestMover.map} picked up noticeably more plays compared to last week.`);
-    } else if (biggestMover && biggestMover.diff <= -2) {
-      lines.push(`${biggestMover.map} cooled off a bit compared to last week.`);
-    }
-  }
-
-  const narrative = lines.join(' ');
-  const breakdown = mapRanks
-    .map(([map, count]) => {
-      const pct = Math.round((count / total) * 1000) / 10;
-      return `${map}: ${pct}%`;
-    })
-    .join(', ');
-
-  return `${narrative}\n\nFull split — ${breakdown}.`;
-}
-
-module.exports = function setup(client, { supabase }) {
-  if (!supabase || !CHANNEL_ID) {
-    console.log('[map-history-digest] Skipping setup — supabase or MAP_HISTORY_CHANNEL_ID not configured.');
+  const rows = await fetchRoundsForPeriod(supabase, days);
+  if (!rows || rows.length === 0) {
+    console.log(`[map-history] No rounds found for ${tier.label} digest — skipping.`);
     return;
   }
 
-  async function postDigest() {
-    const rows = await getWeeklyRounds(supabase);
-    if (!rows) {
-      console.error('[map-history-digest] Failed to fetch weekly round data.');
-      return;
-    }
-    const priorMapCounts = await getPriorWeekMapCounts(supabase);
+  const ch = client.channels.cache.get(CHANNEL_ID)
+    ?? await client.channels.fetch(CHANNEL_ID).catch(() => null);
+  if (!ch) { console.error('[map-history] Could not find channel'); return; }
 
-    const text = writeDigest(rows, priorMapCounts);
+  const dinoWins     = rows.filter(r => r.round_result === 'DinoWin').length;
+  const survivorWins = rows.length - dinoWins;
+  const dinoWinPct   = Math.round((dinoWins / rows.length) * 100);
 
-    const channel = client.channels.cache.get(CHANNEL_ID)
-      ?? await client.channels.fetch(CHANNEL_ID).catch(() => null);
+  const startStr = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    .toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  const endStr   = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
-    if (!channel) {
-      console.error('[map-history-digest] Could not find channel', CHANNEL_ID);
-      return;
-    }
+  const header = `**${tier.label} Map History** — ${startStr} to ${endStr}\n` +
+    `\`${rows.length} rounds · Dino ${dinoWinPct}% / Survivor ${100 - dinoWinPct}%\``;
 
-    await channel.send(text).catch(err => console.error('[map-history-digest] Failed to post:', err.message));
+  const files = [];
 
-    const itemEmbed = buildItemAdoptionEmbed(rows);
-    await channel.send({ embeds: [itemEmbed] }).catch(err => console.error('[map-history-digest] Failed to post item adoption:', err.message));
+  const pieAttachment = await buildDistributionCard(rows, tier.label, days).catch(() => null);
+  if (pieAttachment) files.push(pieAttachment);
 
-    const mvpEmbed = buildMvpEmbed(rows);
-    await channel.send({ embeds: [mvpEmbed] }).catch(err => console.error('[map-history-digest] Failed to post MVP frequency:', err.message));
+  const lineAttachment = await buildPopularityCard(rows, tier.label, days).catch(() => null);
+  if (lineAttachment) files.push(lineAttachment);
 
-    await supabase
-      .from('scheduled_posts')
-      .upsert({ id: POST_ID, last_posted_at: new Date().toISOString() });
+  await ch.send({ content: header, files }).catch(err =>
+    console.error('[map-history] Failed to post:', err.message)
+  );
 
-    console.log('[map-history-digest] Posted weekly digest (v2).');
+  // Update state for this tier (and weekly, since it's always superseded)
+  const toUpdate = ['weekly'];
+  if (tier.key !== 'weekly') toUpdate.push(tier.key);
+
+  for (const key of toUpdate) {
+    await supabase.from('primalgame_state')
+      .upsert({ key: `maphistory_${key}_at`, value: new Date().toISOString() });
   }
 
+  console.log(`[map-history] Posted ${tier.label} digest — ${rows.length} rounds.`);
+}
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
+module.exports = function setupMapHistory(client, { supabase }) {
   async function scheduleNext() {
-    const { data } = await supabase
-      .from('scheduled_posts')
-      .select('last_posted_at')
-      .eq('id', POST_ID)
-      .maybeSingle();
+    const ms = getMsUntilNextSundayMidnightNY();
+    const hrs = Math.round(ms / (60 * 60 * 1000));
+    console.log(`[map-history] Next post in ${hrs}h (Sunday midnight ET).`);
 
-    const lastPosted = data?.last_posted_at ? new Date(data.last_posted_at).getTime() : 0;
-    const elapsed = Date.now() - lastPosted;
-
-    if (elapsed >= WEEK_MS) {
-      await postDigest();
-      setTimeout(scheduleNext, WEEK_MS);
-    } else {
-      const remaining = WEEK_MS - elapsed;
-      setTimeout(async () => {
-        await postDigest();
-        setTimeout(scheduleNext, WEEK_MS);
-      }, remaining);
-      console.log(`[map-history-digest] Next post in ${Math.round(remaining / (60 * 60 * 1000))}h.`);
-    }
+    setTimeout(async () => {
+      await postDigest(client, supabase);
+      scheduleNext();
+    }, ms);
   }
 
   scheduleNext();
 };
 
-module.exports.writeDigest = writeDigest;
-module.exports.buildMvpEmbed = buildMvpEmbed;
-module.exports.buildItemAdoptionEmbed = buildItemAdoptionEmbed;
+// Expose for manual trigger via planned /maphistory command
+module.exports.postDigest = postDigest;
