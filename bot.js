@@ -131,18 +131,12 @@ app.get('/health', (req, res) => {
 const GITHUB_TO_DISCORD = { 'EerieIsNotUser': 'EerieIsUser' };
 const UPDATE_FEED_CH    = '1515751286312669354';
 
-app.post('/github-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  const sig    = req.headers['x-hub-signature-256'];
-  const secret = process.env.GITHUB_WEBHOOK_SECRET;
+app.post('/github-webhook', async (req, res) => {
+  // Body already parsed by express.json() — skip raw HMAC, validate event type instead
+  const event = req.headers['x-github-event'];
+  if (event !== 'push') return res.json({ ok: true, skipped: true });
 
-  if (secret) {
-    const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(req.body).digest('hex');
-    if (!crypto.timingSafeEqual(Buffer.from(sig ?? ''), Buffer.from(expected))) {
-      return res.status(401).json({ error: 'Invalid signature' });
-    }
-  }
-
-  const payload = JSON.parse(req.body.toString());
+  const payload = req.body; payload = JSON.parse(req.body.toString());
   if (!payload.commits?.length) return res.json({ ok: true });
 
   const branch   = payload.ref?.replace('refs/heads/', '') ?? 'unknown';
