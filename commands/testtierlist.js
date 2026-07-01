@@ -6,7 +6,7 @@ const { buildTierListCard } = require('../modules/chart');
 
 const WEAPONS = ['Plasma Rifle','AK-47','Flamethrower','IWS 2000','LMG','Deagle','Railgun','MP5','Shotgun','Crossbow'];
 const VEHICLES = ['Hypercar','Police Car','MRAP','Monster Truck','ATV','Jeep','Go-Kart','Pickup Truck','Muscle Car','Warthog'];
-const PICKUPS = ['Med Kit','Fuel Can','Toolkit','Dino Tracker','Mine','Gamepass Weapon'];
+const PICKUPS = ['Med Kit','Fuel Can','Toolkit','Dino Tracker','Mine'];
 
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 
