@@ -55,7 +55,8 @@ client.once('ready', async () => {
 
   require('./modules/map-history-digest')(client, { supabase });
   require('./modules/tierlist-digest')(client, { supabase });
-  // Manual triggers available via module.exports.postDigest / postTierList
+  require('./modules/matchupdata-digest')(client, { supabase });
+  // Manual triggers available via module.exports.postDigest / postTierList / postMatchupData
   require('./modules/anomaly-alerts')(client, { supabase });
   require('./modules/balance-report')(client, { supabase });
   require('./modules/raw-data-digest')(client, { supabase });
