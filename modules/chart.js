@@ -606,10 +606,10 @@ async function buildStatCard({
 
     const textStartX = px + (accent ? 20 : 16);
 
-    const panelIcon = panel.title.toLowerCase().includes('won') ? '▲'
-      : panel.title.toLowerCase().includes('lost') ? '▼'
-      : panel.title.toLowerCase().includes('map') ? '◎'
-      : panel.title.toLowerCase().includes('dino') ? '◈'
+    const panelIcon = panel.title.toLowerCase().includes('won') ? '+'
+      : panel.title.toLowerCase().includes('lost') ? '-'
+      : panel.title.toLowerCase().includes('map') ? '*'
+      : panel.title.toLowerCase().includes('dino') ? 'D'
       : null;
 
     panelsSvg += `
@@ -631,22 +631,25 @@ async function buildStatCard({
 
     const isHero = panel.lines.length === 1 && !panel.lines[0].includes(': ');
     if (isHero) {
-      // Split "Name (Nx)" into name + count sub-line if pattern matches
+      // Center hero content in the space BELOW the title (title takes ~32px)
+      const TITLE_H = 32;
+      const availH  = PANEL_H - TITLE_H;
+      const centerY = py + TITLE_H + Math.floor(availH / 2);
+
       const heroMatch = panel.lines[0].match(/^(.+?)\s+\((\d+.+?)\)$/);
       if (heroMatch) {
         const heroName  = heroMatch[1];
         const heroCount = `(${heroMatch[2]})`;
-        const centerY   = py + Math.floor(PANEL_H / 2);
         panelsSvg += `
           <text x="${textStartX}" y="${centerY + 4}"
-                fill="#e8e9eb" font-size="24" font-weight="bold"
+                fill="#e8e9eb" font-size="22" font-weight="bold"
                 font-family="DejaVu Sans">${escapeXml(heroName)}</text>
-          <text x="${textStartX}" y="${centerY + 24}"
-                fill="#72767d" font-size="14"
+          <text x="${textStartX}" y="${centerY + 22}"
+                fill="#72767d" font-size="13"
                 font-family="DejaVu Sans">${escapeXml(heroCount)}</text>`;
       } else {
         panelsSvg += `
-          <text x="${textStartX}" y="${py + Math.floor(PANEL_H / 2) + 16}"
+          <text x="${textStartX}" y="${centerY + 8}"
                 fill="#e8e9eb" font-size="22" font-weight="bold"
                 font-family="DejaVu Sans">${escapeXml(panel.lines[0])}</text>`;
       }
