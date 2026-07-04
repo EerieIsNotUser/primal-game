@@ -1,27 +1,27 @@
-// ─── Balance Council Weekly Report (v2 — narrative + change detection) ────
-// Auto-posts weekly to REPORT_CHANNEL_ID, also pullable on demand via
-// /balancereport. Compares this week to last week, calls out what changed,
-// and breaks everything down by game mode (regular / pro / doubletrouble)
-// since those have meaningfully different player counts and dynamics
-// (Double Trouble: 2 dinos, 9 survivors, 11 total; Regular/Pro: 1 dino,
-// up to 10 survivors).
+// ─── Balance Report (v3 — stat card, fixed schema) ────────────────────────
+// Posts weekly to REPORT_CHANNEL_ID, also triggered via /balancereport.
+// Compares this week to last week. Game modes: Normal, Double Trouble.
 
-const { EmbedBuilder } = require('discord.js');
+const { AttachmentBuilder } = require('discord.js');
+const { buildStatCard } = require('./chart');
 
 const REPORT_CHANNEL_ID = '1515751121560272987';
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const POST_ID = 'balance-council-weekly';
 
-const GAME_MODES = ['regular', 'pro', 'doubletrouble'];
-const GAME_MODE_LABELS = { regular: 'Regular', pro: 'Pro', doubletrouble: 'Double Trouble' };
+const ITEM_FIELDS = [
+  { field: 'num_players_with_medkits',     label: 'Med Kit'     },
+  { field: 'num_players_with_toolkits',    label: 'Toolkit'     },
+  { field: 'num_players_with_fuelcans',    label: 'Fuel Can'    },
+  { field: 'num_players_with_dinotrackers',label: 'Dino Tracker'},
+  { field: 'num_players_with_mines',       label: 'Mine'        },
+];
 
 async function getRoundsInRange(supabase, startMs, endMs) {
   const { data, error } = await supabase
     .from('round_logs')
-    .select('map, round_result, game_mode, mvp_equipped_vehicle, mvp_equipped_weapon, mvp_damage, num_players_with_medkits, num_players_with_toolkits, num_players_with_fuelcans, num_players_with_dinotrackers, num_players_with_mines, num_players_with_gamepass_weapons, number_of_players')
+    .select('map, round_result, game_mode, mvp_equipped_vehicle, mvp_equipped_weapon, average_level, num_players_with_medkits, num_players_with_toolkits, num_players_with_fuelcans, num_players_with_dinotrackers, num_players_with_mines, number_of_players')
     .gte('played_at', new Date(startMs).toISOString())
     .lt('played_at', new Date(endMs).toISOString());
-
   if (error || !data) return null;
   return data;
 }
@@ -37,229 +37,153 @@ function rankBy(rows, field, n = 3) {
 }
 
 function winRateSplit(rows) {
-  if (rows.length === 0) return { dinoWinPct: null, survivorWinPct: null };
-  const dinoWins = rows.filter(r => r.round_result === 'DinoWin').length;
-  const survivorWins = rows.filter(r => r.round_result === 'SurvivorWin').length;
+  if (!rows.length) return { dinoPct: null, survivorPct: null };
+  const d = rows.filter(r => r.round_result === 'DinoWin').length;
   return {
-    dinoWinPct: Math.round((dinoWins / rows.length) * 100),
-    survivorWinPct: Math.round((survivorWins / rows.length) * 100),
+    dinoPct:     Math.round((d / rows.length) * 100),
+    survivorPct: Math.round(((rows.length - d) / rows.length) * 100),
   };
 }
 
-function itemAdoption(rows) {
-  if (rows.length === 0) return null;
-  let totals = { medkits: 0, toolkits: 0, fuelcans: 0, dinotrackers: 0, mines: 0, gamepassWeapons: 0 };
+function itemAdoptionPcts(rows) {
+  if (!rows.length) return null;
   let totalPlayers = 0;
+  const totals = {};
+  for (const f of ITEM_FIELDS) totals[f.field] = 0;
   for (const row of rows) {
-    totals.medkits += row.num_players_with_medkits || 0;
-    totals.toolkits += row.num_players_with_toolkits || 0;
-    totals.fuelcans += row.num_players_with_fuelcans || 0;
-    totals.dinotrackers += row.num_players_with_dinotrackers || 0;
-    totals.mines += row.num_players_with_mines || 0;
-    totals.gamepassWeapons += row.num_players_with_gamepass_weapons || 0;
+    for (const f of ITEM_FIELDS) totals[f.field] += row[f.field] || 0;
     totalPlayers += row.number_of_players || 0;
   }
-  if (totalPlayers === 0) return null;
-  const pct = v => Math.round((v / totalPlayers) * 1000) / 10;
-  return {
-    medkits: pct(totals.medkits), toolkits: pct(totals.toolkits), fuelcans: pct(totals.fuelcans),
-    dinotrackers: pct(totals.dinotrackers), mines: pct(totals.mines), gamepassWeapons: pct(totals.gamepassWeapons),
-  };
+  if (!totalPlayers) return null;
+  return ITEM_FIELDS.map(f => ({
+    label: f.label,
+    pct: Math.round((totals[f.field] / totalPlayers) * 1000) / 10,
+  }));
 }
 
-// Build a single sentence describing a week-over-week change, or null if
-// the change is small enough not to be worth mentioning (< 3 points).
-function describeDelta(label, thisVal, lastVal, unit = '%') {
-  if (thisVal === null || lastVal === null) return null;
-  const delta = thisVal - lastVal;
-  if (Math.abs(delta) < 3) return null;
-  const direction = delta > 0 ? 'up' : 'down';
-  return `${label} is ${direction} ${Math.abs(delta)}${unit} (${lastVal}${unit} → ${thisVal}${unit})`;
+// Best map by proportional survivor win rate
+function bestMapByWinRate(rows) {
+  const mapStats = new Map();
+  for (const row of rows) {
+    if (!row.map) continue;
+    if (!mapStats.has(row.map)) mapStats.set(row.map, { wins: 0, total: 0 });
+    const m = mapStats.get(row.map);
+    m.total++;
+    if (row.round_result === 'SurvivorWin') m.wins++;
+  }
+  return [...mapStats.entries()]
+    .filter(([, v]) => v.total >= 5)
+    .sort((a, b) => (b[1].wins / b[1].total) - (a[1].wins / a[1].total))[0] ?? null;
 }
 
-function buildNarrative(thisWeek, lastWeek, gameMode) {
-  if (thisWeek.rows.length === 0) {
-    return `No rounds logged this week${gameMode ? ` for ${GAME_MODE_LABELS[gameMode]}` : ''}.`;
-  }
+async function buildReport(supabase) {
+  const now          = Date.now();
+  const thisStart    = now - WEEK_MS;
+  const lastStart    = now - 2 * WEEK_MS;
 
-  const lines = [];
-  const totalThis = thisWeek.rows.length;
-  const totalLast = lastWeek.rows.length;
+  const [thisWeek, lastWeek] = await Promise.all([
+    getRoundsInRange(supabase, thisStart, now),
+    getRoundsInRange(supabase, lastStart, thisStart),
+  ]);
 
-  // Round volume
-  if (totalLast > 0) {
-    const volDelta = totalThis - totalLast;
-    const volPct = Math.round((volDelta / totalLast) * 100);
-    if (Math.abs(volPct) >= 10) {
-      lines.push(`Round volume is ${volDelta > 0 ? 'up' : 'down'} ${Math.abs(volPct)}% week over week (${totalLast} → ${totalThis} rounds).`);
-    }
-  } else {
-    lines.push(`${totalThis} rounds logged this week — no prior week data to compare against yet.`);
-  }
+  if (!thisWeek || !lastWeek) return null;
 
-  // Win rate split
-  const thisSplit = winRateSplit(thisWeek.rows);
-  const lastSplit = winRateSplit(lastWeek.rows);
-  const winDelta = describeDelta('Dino win rate', thisSplit.dinoWinPct, lastSplit.dinoWinPct);
-  if (winDelta) lines.push(winDelta + '.');
+  const thisSplit  = winRateSplit(thisWeek);
+  const lastSplit  = winRateSplit(lastWeek);
+  const adoption   = itemAdoptionPcts(thisWeek);
+  const topWeapons = rankBy(thisWeek, 'mvp_equipped_weapon', 1);
+  const topVehicles= rankBy(thisWeek, 'mvp_equipped_vehicle', 1);
+  const bestMap    = bestMapByWinRate(thisWeek);
 
-  // Item adoption changes
-  const thisAdoption = itemAdoption(thisWeek.rows);
-  const lastAdoption = itemAdoption(lastWeek.rows);
-  if (thisAdoption && lastAdoption) {
-    const itemLabels = { medkits: 'Med Kit', toolkits: 'Toolkit', fuelcans: 'Fuel Can', dinotrackers: 'Dino Tracker', mines: 'Mine', gamepassWeapons: 'Gamepass weapon' };
-    for (const key of Object.keys(itemLabels)) {
-      const d = describeDelta(`${itemLabels[key]} adoption`, thisAdoption[key], lastAdoption[key], ' pts');
-      if (d) lines.push(d + '.');
-    }
-  }
+  // Win rate delta (rounded to avoid float noise)
+  const winDelta = thisSplit.dinoPct !== null && lastSplit.dinoPct !== null
+    ? Math.round((thisSplit.dinoPct - lastSplit.dinoPct) * 10) / 10
+    : null;
+  const winDeltaStr = winDelta === null ? '—'
+    : winDelta === 0 ? 'Steady'
+    : `${winDelta > 0 ? '+' : ''}${winDelta} pts vs last week`;
 
-  // MVP movers — did the top weapon/vehicle change?
-  const thisWeapons = rankBy(thisWeek.rows, 'mvp_equipped_weapon', 1);
-  const lastWeapons = rankBy(lastWeek.rows, 'mvp_equipped_weapon', 1);
-  if (thisWeapons[0] && lastWeapons[0] && thisWeapons[0][0] !== lastWeapons[0][0]) {
-    lines.push(`Top MVP weapon changed from ${lastWeapons[0][0]} to ${thisWeapons[0][0]}.`);
-  }
+  // Volume delta
+  const volDelta = lastWeek.length > 0
+    ? Math.round(((thisWeek.length - lastWeek.length) / lastWeek.length) * 100)
+    : null;
+  const volStr = volDelta === null
+    ? `${thisWeek.length.toLocaleString()} rounds`
+    : `${thisWeek.length.toLocaleString()} (${volDelta > 0 ? '+' : ''}${volDelta}% WoW)`;
 
-  const thisVehicles = rankBy(thisWeek.rows, 'mvp_equipped_vehicle', 1);
-  const lastVehicles = rankBy(lastWeek.rows, 'mvp_equipped_vehicle', 1);
-  if (thisVehicles[0] && lastVehicles[0] && thisVehicles[0][0] !== lastVehicles[0][0]) {
-    lines.push(`Top MVP vehicle changed from ${lastVehicles[0][0]} to ${thisVehicles[0][0]}.`);
-  }
+  // Item adoption top 3
+  const adoptionStr = adoption
+    ? adoption.slice(0, 3).map(a => `${a.label} ${a.pct}%`).join(' · ')
+    : '—';
 
-  if (lines.length === 0) {
-    lines.push(`Nothing stood out this week — round volume, win rates, item adoption, and MVP frequency all held steady compared to last week.`);
-  }
+  const startStr = new Date(thisStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const endStr   = new Date(now).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const lookback = `${startStr} – ${endStr}`;
 
-  return lines.join(' ');
-}
+  const winColor = thisSplit.dinoPct >= 55 ? '#ED4245'
+    : thisSplit.survivorPct >= 55 ? '#57F287'
+    : '#FEE75C';
 
-function buildHighlightsEmbed(thisWeek, gameMode) {
-  const label = gameMode ? GAME_MODE_LABELS[gameMode] : 'All Modes';
-  const rows = thisWeek.rows;
+  const cardBuffer = await buildStatCard({
+    title:    'Weekly Balance Report',
+    subtitle: `Primal Pursuit · ${lookback}`,
+    stats: [
+      { label: 'Total Rounds',  value: thisWeek.length.toLocaleString(),        color: '#5865F2' },
+      { label: 'Dino Win',      value: `${thisSplit.dinoPct ?? '—'}%`,           color: '#ED4245' },
+      { label: 'Survivor Win',  value: `${thisSplit.survivorPct ?? '—'}%`,       color: '#57F287' },
+    ],
+    lookback,
+    panels: [
+      { title: 'Win Rate Δ',      lines: [winDeltaStr]                                              },
+      { title: 'Round Volume',    lines: [volStr]                                                    },
+      { title: 'Best Map',        lines: [bestMap ? `${bestMap[0]} (${bestMap[1].total}r)` : '—']   },
+      { title: 'Top MVP Weapon',  lines: [topWeapons[0]  ? `${topWeapons[0][0]} (${topWeapons[0][1]}x)`   : '—'] },
+      { title: 'Top MVP Vehicle', lines: [topVehicles[0] ? `${topVehicles[0][0]} (${topVehicles[0][1]}x)` : '—'] },
+      { title: 'Item Adoption',   lines: [adoptionStr]                                               },
+    ],
+    note: winDelta !== null && Math.abs(winDelta) >= 5
+      ? `Dino win rate shifted ${winDelta > 0 ? 'up' : 'down'} ${Math.abs(winDelta)} pts week over week — worth reviewing.`
+      : '',
+  });
 
-  if (rows.length === 0) {
-    return new EmbedBuilder()
-      .setColor(0x5865F2)
-      .setTitle(`${label} — Highlights`)
-      .setDescription('No rounds logged this week.');
-  }
-
-  const topVehicles = rankBy(rows, 'mvp_equipped_vehicle', 3);
-  const topWeapons = rankBy(rows, 'mvp_equipped_weapon', 3);
-  const topMaps = rankBy(rows, 'map', 3);
-  const split = winRateSplit(rows);
-
-  return new EmbedBuilder()
-    .setColor(0x5865F2)
-    .setTitle(`${label} — Highlights`)
-    .addFields(
-      { name: 'Round Result', value: `Dino: ${split.dinoWinPct}% · Survivor: ${split.survivorWinPct}%`, inline: false },
-      { name: 'Top Maps', value: topMaps.length ? topMaps.map(([m, c]) => `${m} (${c})`).join(', ') : 'No data', inline: false },
-      { name: 'Top MVP Vehicles', value: topVehicles.length ? topVehicles.map(([v, c]) => `${v} (${c}x)`).join(', ') : 'No data', inline: false },
-      { name: 'Top MVP Weapons', value: topWeapons.length ? topWeapons.map(([w, c]) => `${w} (${c}x)`).join(', ') : 'No data', inline: false },
-    )
-    .setFooter({ text: `${rows.length} rounds this week` });
-}
-
-async function buildFullReport(supabase) {
-  const now = Date.now();
-  const thisWeekStart = now - WEEK_MS;
-  const lastWeekStart = now - 2 * WEEK_MS;
-
-  const allThisWeek = await getRoundsInRange(supabase, thisWeekStart, now);
-  const allLastWeek = await getRoundsInRange(supabase, lastWeekStart, thisWeekStart);
-
-  if (allThisWeek === null || allLastWeek === null) return null;
-
-  // Overall narrative (all modes combined)
-  const overallNarrative = buildNarrative({ rows: allThisWeek }, { rows: allLastWeek }, null);
-  const overallHighlights = buildHighlightsEmbed({ rows: allThisWeek }, null);
-
-  // Per-game-mode breakdown
-  const modeEmbeds = [];
-  for (const mode of GAME_MODES) {
-    const thisModeRows = allThisWeek.filter(r => r.game_mode === mode);
-    const lastModeRows = allLastWeek.filter(r => r.game_mode === mode);
-    if (thisModeRows.length === 0 && lastModeRows.length === 0) continue; // skip modes with zero data entirely
-
-    const modeNarrative = buildNarrative({ rows: thisModeRows }, { rows: lastModeRows }, mode);
-    const modeHighlights = buildHighlightsEmbed({ rows: thisModeRows }, mode);
-    modeHighlights.setDescription(modeNarrative);
-    modeEmbeds.push(modeHighlights);
-  }
-
-  return {
-    overallNarrative,
-    overallHighlights,
-    modeEmbeds,
-    totalRounds: allThisWeek.length,
-  };
+  return { cardBuffer, lookback };
 }
 
 async function postReport(channel, supabase) {
-  const report = await buildFullReport(supabase);
+  const report = await buildReport(supabase);
   if (!report) {
     console.error('[balance-report] Failed to build report.');
-    await channel.send('Failed to fetch round data for the report — check logs.').catch(() => {});
     return false;
   }
-
   await channel.send({
-    content: `**Weekly Summary**\n${report.overallNarrative}`,
-    embeds: [report.overallHighlights],
-  }).catch(err => console.error('[balance-report] Failed to post overall:', err.message));
-
-  for (const embed of report.modeEmbeds) {
-    await channel.send({ embeds: [embed] }).catch(err => console.error('[balance-report] Failed to post mode embed:', err.message));
-  }
-
+    files: [new AttachmentBuilder(report.cardBuffer, { name: 'balance-report.png' })],
+  }).catch(err => console.error('[balance-report] Failed to post:', err.message));
   return true;
 }
 
 function setup(client, { supabase }) {
-  if (!supabase) {
-    console.log('[balance-report] Skipping setup — supabase not configured.');
-    return;
-  }
+  if (!supabase) return;
 
   async function scheduledPost() {
-    const channel = client.channels.cache.get(REPORT_CHANNEL_ID)
+    const ch = client.channels.cache.get(REPORT_CHANNEL_ID)
       ?? await client.channels.fetch(REPORT_CHANNEL_ID).catch(() => null);
-
-    if (!channel) {
-      console.error('[balance-report] Could not find report channel', REPORT_CHANNEL_ID);
-      return;
-    }
-
-    await postReport(channel, supabase);
-
-    await supabase
-      .from('scheduled_posts')
-      .upsert({ id: POST_ID, last_posted_at: new Date().toISOString() });
-
-    console.log('[balance-report] Posted weekly Balance Council report.');
+    if (!ch) { console.error('[balance-report] Could not find channel'); return; }
+    await postReport(ch, supabase);
+    await supabase.from('primalgame_state').upsert({ key: 'balance_weekly_at', value: new Date().toISOString() });
+    console.log('[balance-report] Posted weekly balance report.');
   }
 
   async function scheduleNext() {
     const { data } = await supabase
-      .from('scheduled_posts')
-      .select('last_posted_at')
-      .eq('id', POST_ID)
-      .maybeSingle();
+      .from('primalgame_state').select('value').eq('key', 'balance_weekly_at').single();
+    const lastPosted = data?.value ? new Date(data.value).getTime() : 0;
+    const remaining  = WEEK_MS - (Date.now() - lastPosted);
 
-    const lastPosted = data?.last_posted_at ? new Date(data.last_posted_at).getTime() : 0;
-    const elapsed = Date.now() - lastPosted;
-
-    if (elapsed >= WEEK_MS) {
+    if (remaining <= 0) {
       await scheduledPost();
       setTimeout(scheduleNext, WEEK_MS);
     } else {
-      const remaining = WEEK_MS - elapsed;
-      setTimeout(async () => {
-        await scheduledPost();
-        setTimeout(scheduleNext, WEEK_MS);
-      }, remaining);
+      setTimeout(async () => { await scheduledPost(); setTimeout(scheduleNext, WEEK_MS); }, remaining);
       console.log(`[balance-report] Next post in ${Math.round(remaining / (60 * 60 * 1000))}h.`);
     }
   }
@@ -269,4 +193,4 @@ function setup(client, { supabase }) {
 
 module.exports = setup;
 module.exports.postReport = postReport;
-module.exports.buildFullReport = buildFullReport;
+module.exports.buildReport = buildReport;

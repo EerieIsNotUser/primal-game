@@ -255,7 +255,12 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
   } else {
     mapsShown = series.map(s => s.label);
     const coloredSeries = series.map(s => ({ ...s, color: MAP_COLORS[s.label] ?? s.color }));
-    chartBuffer = await buildLineChartImage(labels, coloredSeries, null);
+    const totalPerBucket = labels.map((_, i) => series.reduce((sum, s) => sum + (s.data[i] || 0), 0));
+    chartBuffer = await buildDualAxisChartImage(
+      labels, totalPerBucket, 'Total Rounds',
+      coloredSeries,
+      null
+    );
     cardTitle = 'Map Popularity';
   }
 
