@@ -55,7 +55,7 @@ function escapeXml(str) {
 }
 
 // Catmull-Rom to cubic Bezier conversion for smooth curves through all points
-function smoothPath(points, maxY = Infinity) {
+function smoothPath(points, maxY = Infinity, minY = -Infinity) {
   if (points.length < 2) return '';
   if (points.length === 2) {
     return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
@@ -67,9 +67,9 @@ function smoothPath(points, maxY = Infinity) {
     const p2 = points[i + 1];
     const p3 = points[i + 2 < points.length ? i + 2 : i + 1];
     const cp1x = p1.x + (p2.x - p0.x) / 6;
-    const cp1y = Math.min(maxY, p1.y + (p2.y - p0.y) / 6);
+    const cp1y = Math.min(maxY, Math.max(minY, p1.y + (p2.y - p0.y) / 6));
     const cp2x = p2.x - (p3.x - p1.x) / 6;
-    const cp2y = Math.min(maxY, p2.y - (p3.y - p1.y) / 6);
+    const cp2y = Math.min(maxY, Math.max(minY, p2.y - (p3.y - p1.y) / 6));
     d += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
   }
   return d;
@@ -136,7 +136,7 @@ async function buildLineChartImage(labels, series, title) {
       </linearGradient>`;
 
     const points = s.data.map((v, i) => ({ x: xFor(i), y: yFor(v) }));
-    const linePath = smoothPath(points, padding.top + plotH);
+    const linePath = smoothPath(points, padding.top + plotH, padding.top);
     const fillPath = `${linePath} L ${xFor(s.data.length - 1).toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${xFor(0).toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
 
     fillsSvg += `<path d="${fillPath}" fill="url(#${gradId})"/>`;
@@ -274,7 +274,7 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
       </linearGradient>`;
 
     const points = s.data.map((v, i) => ({ x: xFor(i), y: yForRight(v) }));
-    const linePath = smoothPath(points, padding.top + plotH);
+    const linePath = smoothPath(points, padding.top + plotH, padding.top);
     const fillPath = `${linePath} L ${xFor(s.data.length - 1).toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${xFor(0).toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
 
     fillsSvg += `<path d="${fillPath}" fill="url(#${gradId})"/>`;

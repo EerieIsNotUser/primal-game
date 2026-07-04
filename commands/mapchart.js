@@ -296,32 +296,63 @@ async function renderWinRateOverTime(interaction, supabase, category, item, days
   }
 
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const cutoffISO = cutoff.toISOString();
 
-  let query = supabase.from('round_logs').select('round_result, played_at').gte('played_at', cutoff.toISOString());
-  query = category === 'vehicle' ? query.eq('mvp_equipped_vehicle', item) : query.eq('mvp_equipped_weapon', item);
+  // Fetch item-specific rows (for win rate line)
+  let itemQuery = supabase.from('round_logs').select('round_result, played_at').gte('played_at', cutoffISO);
+  itemQuery = category === 'vehicle' ? itemQuery.eq('mvp_equipped_vehicle', item) : itemQuery.eq('mvp_equipped_weapon', item);
 
-  const { data: rows, error } = await query.limit(100000);
-  if (error) return interaction.editReply('❌ Something went wrong fetching round data.');
-  if (!rows || rows.length === 0) {
+  // Fetch all rounds in window (for total volume bars)
+  const [{ data: itemRows, error: itemErr }, { data: allRows, error: allErr }] = await Promise.all([
+    itemQuery.limit(100000),
+    supabase.from('round_logs').select('played_at').gte('played_at', cutoffISO).limit(100000),
+  ]);
+
+  if (itemErr || allErr) return interaction.editReply('❌ Something went wrong fetching round data.');
+  if (!itemRows || itemRows.length === 0) {
     return interaction.editReply({
       content: `No rounds found for **${item}** in the selected range.`,
       embeds: [], files: [], components: [buildTypeSelectRow()],
     });
   }
 
-  const { labels, data } = bucketWinRateByDay(rows, days);
-  const chartBuffer = await buildLineChartImage(labels, [{ label: `${item} Win Rate %`, data }], null);
+  const { labels, data: winRateData } = bucketWinRateByDay(itemRows, days);
+
+  // Bucket all rounds into daily totals for bar series
+  const totalByDay = new Array(days).fill(0);
+  const startMs = cutoff.getTime();
+  for (const row of (allRows ?? [])) {
+    const idx = Math.floor((new Date(row.played_at).getTime() - startMs) / (24 * 60 * 60 * 1000));
+    if (idx >= 0 && idx < days) totalByDay[idx]++;
+  }
+
+  const catLabel = category === 'vehicle' ? 'Vehicle' : 'Weapon';
+  const lineColor = category === 'vehicle' ? '#5865F2' : '#ED4245';
+
+  const chartBuffer = await buildDualAxisChartImage(
+    labels,
+    totalByDay,
+    'Total Rounds (All)',
+    [{ label: `${item} Surv. Win %`, data: winRateData, color: lineColor }],
+    null
+  );
+
   const buffer = await buildChartCard(chartBuffer, {
     title: `${item} — Win Rate Over Time`,
-    subtitle: `Primal Pursuit · ${category === 'vehicle' ? 'Vehicle' : 'Weapon'} · Past ${days} Days`,
+    subtitle: `Primal Pursuit · ${catLabel} · Past ${days} Days`,
     stats: [
-      { label: 'Rounds Sampled', value: rows.length.toLocaleString(), color: '#5865F2' },
+      { label: 'MVP Rounds',   value: itemRows.length.toLocaleString(), color: lineColor   },
+      { label: 'Total Rounds', value: (allRows?.length ?? 0).toLocaleString(), color: '#5865F2' },
     ],
     lookback: `Past ${days} Days`,
   });
-  const attachment = new AttachmentBuilder(buffer, { name: 'winratechart.png' });
 
-  return interaction.editReply({ content: `\`${rows.length} rounds · MVP-correlation proxy\``, files: [attachment], components: [buildTypeSelectRow()] });
+  const attachment = new AttachmentBuilder(buffer, { name: 'winratechart.png' });
+  return interaction.editReply({
+    content: `\`${itemRows.length} MVP rounds · MVP-correlation proxy\``,
+    files: [attachment],
+    components: [buildTypeSelectRow()],
+  });
 }
 
 module.exports = {
