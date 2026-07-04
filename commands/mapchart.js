@@ -249,22 +249,16 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
     if (!mapSeries) return interaction.editReply(`No data found for map "${mapFilter}".`);
 
     mapsShown = [mapSeries.label];
-    const totalPerDay = labels.map((_, i) => series.reduce((sum, s) => sum + (s.data[i] || 0), 0));
-    chartBuffer = await buildDualAxisChartImage(
-      labels, totalPerDay, 'Total Rounds Played (All Maps)',
+    chartBuffer = await buildLineChartImage(
+      labels,
       [{ label: mapSeries.label, data: mapSeries.data, color: MAP_COLORS[mapSeries.label] }],
       null
     );
-    cardTitle = `${mapSeries.label} — Popularity vs Total Rounds`;
+    cardTitle = `${mapSeries.label} — Round Count`;
   } else {
     mapsShown = series.map(s => s.label);
     const coloredSeries = series.map(s => ({ ...s, color: MAP_COLORS[s.label] ?? s.color }));
-    const totalPerBucket = labels.map((_, i) => series.reduce((sum, s) => sum + (s.data[i] || 0), 0));
-    chartBuffer = await buildDualAxisChartImage(
-      labels, totalPerBucket, 'Total Rounds',
-      coloredSeries,
-      null
-    );
+    chartBuffer = await buildLineChartImage(labels, coloredSeries, null);
     cardTitle = 'Map Popularity';
   }
 
