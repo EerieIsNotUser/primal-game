@@ -91,7 +91,8 @@ async function fetchTopMvp(supabase, field, days, limit = 10) {
     .from('round_logs')
     .select(field)
     .gte('played_at', cutoff.toISOString())
-    .not(field, 'is', null);
+    .not(field, 'is', null)
+    .limit(100000);
 
   if (error || !data) return [];
 
@@ -112,7 +113,8 @@ async function fetchTopPickups(supabase, days) {
   const { data, error } = await supabase
     .from('round_logs')
     .select(PICKUP_FIELDS.map(f => f.field).join(', '))
-    .gte('played_at', cutoff.toISOString());
+    .gte('played_at', cutoff.toISOString())
+    .limit(100000);
 
   if (error || !data) return [];
 

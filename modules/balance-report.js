@@ -21,7 +21,8 @@ async function getRoundsInRange(supabase, startMs, endMs) {
     .from('round_logs')
     .select('map, round_result, game_mode, mvp_equipped_vehicle, mvp_equipped_weapon, average_level, num_players_with_medkits, num_players_with_toolkits, num_players_with_fuelcans, num_players_with_dinotrackers, num_players_with_mines, number_of_players')
     .gte('played_at', new Date(startMs).toISOString())
-    .lt('played_at', new Date(endMs).toISOString());
+    .lt('played_at', new Date(endMs).toISOString())
+    .limit(100000);
   if (error || !data) return null;
   return data;
 }

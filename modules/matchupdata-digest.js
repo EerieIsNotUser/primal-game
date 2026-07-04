@@ -155,7 +155,8 @@ async function postMatchupData(client, supabase, overrideDates = null) {
     .from('round_logs')
     .select('map, round_result, mvp_equipped_weapon, mvp_equipped_vehicle, dinosaurs_used')
     .gte('played_at', startDate.toISOString())
-    .lte('played_at', endDate.toISOString());
+    .lte('played_at', endDate.toISOString())
+    .limit(100000);
 
   if (error || !rows || rows.length === 0) {
     console.log(`[matchupdata] No rounds found for ${tierLabel} — skipping.`);

@@ -102,7 +102,7 @@ function parseDateRange(text) {
 }
 
 async function queryWinRate(supabase, { category, item, gameMode, days, dateRange }) {
-  let query = supabase.from('round_logs').select('*');
+  let query = supabase.from('round_logs').select('*').limit(100000);
 
   if (dateRange) {
     query = query.gte('played_at', dateRange.startDate.toISOString()).lte('played_at', dateRange.endDate.toISOString());

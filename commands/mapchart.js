@@ -227,7 +227,8 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
     .from('round_logs')
     .select('map, played_at, round_result')
     .gte('played_at', startDate.toISOString())
-    .lte('played_at', endDate.toISOString());
+    .lte('played_at', endDate.toISOString())
+    .limit(100000);
 
   if (error) return interaction.editReply('❌ Something went wrong fetching round data.');
   if (!rows || rows.length === 0) return interaction.editReply(`No round data found for the past ${days} days.`);
