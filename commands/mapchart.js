@@ -375,7 +375,7 @@ module.exports = {
 
   async execute(interaction, { supabase }) {
     await interaction.deferReply();
-    const days = interaction.options.getInteger('days') ?? 14;
+    const days = interaction.options.getInteger('days') ?? 7;
     const mapFilter = interaction.options.getString('map');
 
     await renderMapPopularity(interaction, supabase, days, mapFilter);
