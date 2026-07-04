@@ -245,13 +245,16 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   function yForRight(v) { return padding.top + plotH - (v / rightMax) * plotH; }
 
   // Background bars (total volume, left axis)
+  // Cap bar height at 60% of plotH so bars stay readable when line values
+  // are on a completely different scale (e.g. total rounds vs win rate %)
   const barWidth = (plotW / labels.length) * 0.6;
+  const barMax = Math.max(1, ...barData);
   let barsSvg = '';
   barData.forEach((v, i) => {
+    const h = Math.round((v / barMax) * plotH * 0.6);
     const x = xFor(i) - barWidth / 2;
-    const y = yForLeft(v);
-    const h = (padding.top + plotH) - y;
-    barsSvg += `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${h.toFixed(2)}" fill="rgba(255,255,255,0.12)" rx="2"/>`;
+    const y = padding.top + plotH - h;
+    barsSvg += `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${h}" fill="rgba(255,255,255,0.18)" rx="2"/>`;
   });
 
   // Foreground line(s) — right axis, each with its own gradient fill.
@@ -273,12 +276,26 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
         <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
       </linearGradient>`;
 
-    const points = s.data.map((v, i) => ({ x: xFor(i), y: yForRight(v) }));
-    const linePath = smoothPath(points, padding.top + plotH, padding.top);
-    const fillPath = `${linePath} L ${xFor(s.data.length - 1).toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${xFor(0).toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
+    // Split into segments at zero-value points so empty days render as
+    // gaps rather than dips to 0 (zero means no data for this item, not 0%)
+    const segments = [];
+    let current = [];
+    s.data.forEach((v, i) => {
+      if (v === 0) {
+        if (current.length > 0) { segments.push(current); current = []; }
+      } else {
+        current.push({ x: xFor(i), y: yForRight(v) });
+      }
+    });
+    if (current.length > 0) segments.push(current);
 
-    fillsSvg += `<path d="${fillPath}" fill="url(#${gradId})"/>`;
-    linesSvg += `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+    segments.forEach(pts => {
+      if (pts.length === 0) return;
+      const linePath = smoothPath(pts, padding.top + plotH, padding.top);
+      const fillPath = `${linePath} L ${pts[pts.length - 1].x.toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${pts[0].x.toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
+      fillsSvg += `<path d="${fillPath}" fill="url(#${gradId})"/>`;
+      linesSvg += `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+    });
   });
 
   // Gridlines referenced to the right (line) axis, Statbot-style
@@ -301,7 +318,7 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   let rightAxisSvg = '';
   for (let v = 0; v <= rightMax; v += gridStep) {
     const y = yForRight(v);
-    rightAxisSvg += `<text x="${WIDTH - padding.right + 10}" y="${(y + 4).toFixed(2)}" fill="${rightAxisColor}" font-size="12" font-family="DejaVu Sans" text-anchor="start">${Math.round(v)}</text>`;
+    rightAxisSvg += `<text x="${WIDTH - padding.right + 8}" y="${(y + 4).toFixed(2)}" fill="${rightAxisColor}" font-size="11" font-family="DejaVu Sans" text-anchor="start" opacity="0.7">${Math.round(v)}</text>`;
   }
 
   // X-axis labels — thin out if too many
