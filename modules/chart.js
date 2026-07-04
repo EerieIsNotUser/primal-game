@@ -1025,18 +1025,18 @@ async function buildTierListCard({
   const LIST_H       = listItems.length > 0
     ? listItems.length * (ROW_H + ROW_GAP) - ROW_GAP
     : 0;
-  const FOOTER_Y     = LIST_START_Y + LIST_H + (listItems.length > 0 ? 14 : 0);
-  const CARD_H       = FOOTER_Y + FOOTER_H;
+  const FOOTER_Y = LIST_START_Y + LIST_H + (listItems.length > 0 ? 14 : 0);
+  const CARD_H   = FOOTER_Y + FOOTER_H;
 
   const MEDALS = [
-    { color: '#FFD700', label: '1' },
-    { color: '#C0C0C0', label: '2' },
-    { color: '#CD7F32', label: '3' },
+    { color: '#C9A84C', label: '1' }, // muted gold
+    { color: '#909090', label: '2' }, // muted silver
+    { color: '#8C6239', label: '3' }, // muted bronze
   ];
   const PODIUM_CFGS = [
-    { x: X1, y: Y1, w: W1, h: H1, medal: MEDALS[0] },
-    { x: X2, y: Y2, w: W2, h: H2, medal: MEDALS[1] },
-    { x: X3, y: Y3, w: W3, h: H3, medal: MEDALS[2] },
+    { x: X1, y: Y1, w: W1, h: H1, medal: MEDALS[0], bg: '#161820' },
+    { x: X2, y: Y2, w: W2, h: H2, medal: MEDALS[1], bg: '#111214' },
+    { x: X3, y: Y3, w: W3, h: H3, medal: MEDALS[2], bg: '#111214' },
   ];
 
   // ── Icon ──────────────────────────────────────────────────────────────
@@ -1051,10 +1051,11 @@ async function buildTierListCard({
     iconBuffer = await sharp(raw).composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
   } catch (_) {}
 
-  // ── Header stat boxes ─────────────────────────────────────────────────
+  // ── Header stat boxes — only non-total stats ──────────────────────────
   const BOX_W = 160, BOX_H = 62, BOX_GAP = 10;
   const BOX_Y = Math.round((HEADER_H - BOX_H) / 2);
-  const cappedS = stats.slice(0, 3);
+  const filteredStats = stats.filter(s => s.label !== 'MVP Rounds' && s.label !== 'Total Pickups' && s.label !== 'Total');
+  const cappedS = filteredStats.slice(0, 2);
   const totalBW = cappedS.length * BOX_W + Math.max(0, cappedS.length - 1) * BOX_GAP;
   let statBoxesSvg = '';
   cappedS.forEach((s, i) => {
@@ -1081,44 +1082,57 @@ async function buildTierListCard({
     const item    = podiumItems[i];
     const cfg     = PODIUM_CFGS[i];
     const medal   = cfg.medal;
-    const IPADY   = 38;
-    const IPADB   = 46;
-    const IPADX   = 14;
-    const imgX    = cfg.x + IPADX;
-    const imgY    = cfg.y + IPADY;
-    const imgW    = cfg.w - IPADX * 2;
-    const imgH    = cfg.h - IPADY - IPADB;
+
+    // image area: top 55% of panel below rank label
+    const RANK_H  = 32;
+    const NAME_H  = 48;
+    const imgX    = cfg.x + 12;
+    const imgY    = cfg.y + RANK_H;
+    const imgW    = cfg.w - 24;
+    const imgH    = Math.floor((cfg.h - RANK_H - NAME_H) * 0.92);
+    const nameY   = cfg.y + cfg.h - 28;
+    const countY  = cfg.y + cfg.h - 10;
     const nameStr = item.name.length > 18 ? item.name.slice(0, 17) + '…' : item.name;
+
+    // watermark rank number
+    const wmarkX  = cfg.x + cfg.w - 14;
+    const wmarkY  = cfg.y + cfg.h - 8;
 
     podiumSvg += `
       <rect x="${cfg.x}" y="${cfg.y}" width="${cfg.w}" height="${cfg.h}" rx="8"
-            fill="#111214" stroke="${medal.color}" stroke-width="1" stroke-opacity="0.35"/>
-      <rect x="${cfg.x}" y="${cfg.y}" width="5" height="${cfg.h}" rx="3"
-            fill="${medal.color}" opacity="0.7"/>
-      <circle cx="${cfg.x + 22}" cy="${cfg.y + 20}" r="13"
-              fill="${medal.color}" opacity="0.12"/>
-      <circle cx="${cfg.x + 22}" cy="${cfg.y + 20}" r="13"
-              fill="none" stroke="${medal.color}" stroke-width="1.5" opacity="0.5"/>
-      <text x="${cfg.x + 22}" y="${cfg.y + 25}"
-            fill="${medal.color}" font-size="13" font-weight="bold"
-            font-family="DejaVu Sans" text-anchor="middle">${medal.label}</text>
-      <rect x="${imgX}" y="${imgY}" width="${imgW}" height="${imgH}" rx="5"
-            fill="rgba(255,255,255,0.03)"
-            stroke="rgba(255,255,255,0.07)" stroke-width="1" stroke-dasharray="4 3"/>
-      <text x="${imgX + imgW / 2}" y="${imgY + imgH / 2 - 5}"
-            fill="rgba(255,255,255,0.09)" font-size="11"
+            fill="${cfg.bg}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+
+      <!-- watermark rank -->
+      <text x="${wmarkX}" y="${wmarkY}"
+            fill="${medal.color}" font-size="72" font-weight="bold"
+            font-family="DejaVu Sans" text-anchor="end"
+            opacity="0.06">${medal.label}</text>
+
+      <!-- rank label -->
+      <text x="${cfg.x + 14}" y="${cfg.y + 22}"
+            fill="${medal.color}" font-size="12" font-weight="bold"
+            font-family="DejaVu Sans">#${medal.label}</text>
+
+      <!-- image area -->
+      <rect x="${imgX}" y="${imgY}" width="${imgW}" height="${imgH}" rx="6"
+            fill="rgba(255,255,255,0.02)"
+            stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="5 4"/>
+      <text x="${imgX + imgW / 2}" y="${imgY + imgH / 2 - 4}"
+            fill="rgba(255,255,255,0.08)" font-size="11"
             font-family="DejaVu Sans" text-anchor="middle">Image</text>
-      <text x="${imgX + imgW / 2}" y="${imgY + imgH / 2 + 11}"
-            fill="rgba(255,255,255,0.05)" font-size="10"
+      <text x="${imgX + imgW / 2}" y="${imgY + imgH / 2 + 12}"
+            fill="rgba(255,255,255,0.04)" font-size="10"
             font-family="DejaVu Sans" text-anchor="middle">Coming Soon</text>
-      <line x1="${cfg.x + 10}" y1="${cfg.y + cfg.h - IPADB + 4}"
-            x2="${cfg.x + cfg.w - 10}" y2="${cfg.y + cfg.h - IPADB + 4}"
-            stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
-      <text x="${cfg.x + cfg.w / 2}" y="${cfg.y + cfg.h - 24}"
-            fill="#e8e9eb" font-size="14" font-weight="bold"
+
+      <!-- name + count -->
+      <line x1="${cfg.x + 10}" y1="${nameY - 12}"
+            x2="${cfg.x + cfg.w - 10}" y2="${nameY - 12}"
+            stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+      <text x="${cfg.x + cfg.w / 2}" y="${nameY}"
+            fill="#e8e9eb" font-size="15" font-weight="bold"
             font-family="DejaVu Sans" text-anchor="middle">${escapeXml(nameStr)}</text>
-      <text x="${cfg.x + cfg.w / 2}" y="${cfg.y + cfg.h - 8}"
-            fill="${medal.color}" font-size="11"
+      <text x="${cfg.x + cfg.w / 2}" y="${countY}"
+            fill="${medal.color}" font-size="12"
             font-family="DejaVu Sans" text-anchor="middle">${escapeXml(String(item.count))}×</text>`;
 
     if (category) {
@@ -1136,28 +1150,28 @@ async function buildTierListCard({
   let listSvg = '';
   if (listItems.length > 0) {
     listSvg += `<line x1="${PAD}" y1="${LIST_START_Y - 7}" x2="${CARD_W - PAD}" y2="${LIST_START_Y - 7}"
-                      stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`;
+                      stroke="rgba(255,255,255,0.05)" stroke-width="1"/>`;
   }
 
   listItems.forEach((item, i) => {
     const rank     = i + 4;
     const rowY     = LIST_START_Y + i * (ROW_H + ROW_GAP);
     const fillW    = Math.round((item.count / maxCount) * (CARD_W - 2 * PAD));
-    const opacity  = (0.04 + (item.count / maxCount) * 0.12).toFixed(3);
-    const nameSafe = item.name.length > 30 ? item.name.slice(0, 29) + '…' : item.name;
+    const opacity  = (0.03 + (item.count / maxCount) * 0.10).toFixed(3);
+    const nameSafe = item.name.length > 32 ? item.name.slice(0, 31) + '…' : item.name;
 
     listSvg += `
       <rect x="${PAD}" y="${rowY}" width="${CARD_W - 2 * PAD}" height="${ROW_H}" rx="5"
-            fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+            fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
       <rect x="${PAD}" y="${rowY}" width="${fillW}" height="${ROW_H}" rx="5"
             fill="${accentColor}" opacity="${opacity}"/>
-      <text x="${PAD + 18}" y="${rowY + 21}"
-            fill="#4a4d5e" font-size="12" font-family="DejaVu Sans"
+      <text x="${PAD + 16}" y="${rowY + 21}"
+            fill="#4a4d5e" font-size="11" font-family="DejaVu Sans"
             text-anchor="middle">${rank}</text>
-      <text x="${PAD + 34}" y="${rowY + 21}"
-            fill="#e8e9eb" font-size="13" font-family="DejaVu Sans">${escapeXml(nameSafe)}</text>
+      <text x="${PAD + 30}" y="${rowY + 21}"
+            fill="#c8cad0" font-size="13" font-family="DejaVu Sans">${escapeXml(nameSafe)}</text>
       <text x="${CARD_W - PAD - 8}" y="${rowY + 21}"
-            fill="#72767d" font-size="12" font-family="DejaVu Sans"
+            fill="#6b6e7a" font-size="12" font-family="DejaVu Sans"
             text-anchor="end">${escapeXml(String(item.count))}×</text>`;
   });
 
