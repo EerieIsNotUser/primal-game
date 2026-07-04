@@ -295,10 +295,10 @@ async function renderWinRateOverTime(interaction, supabase, category, item, mont
   const cutoff = new Date();
   cutoff.setMonth(cutoff.getMonth() - months);
 
-  let query = supabase.from('round_logs').select('round_result, played_at').gte('played_at', cutoff.toISOString()).limit(100000);
+  let query = supabase.from('round_logs').select('round_result, played_at').gte('played_at', cutoff.toISOString());
   query = category === 'vehicle' ? query.eq('mvp_equipped_vehicle', item) : query.eq('mvp_equipped_weapon', item);
 
-  const { data: rows, error } = await query;
+  const { data: rows, error } = await query.limit(100000);
   if (error) return interaction.editReply('❌ Something went wrong fetching round data.');
   if (!rows || rows.length === 0) {
     return interaction.editReply({

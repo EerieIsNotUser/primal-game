@@ -64,7 +64,8 @@ async function getRows(supabase, sinceMs) {
     .from('round_logs')
     .select(COLUMNS.map(c => c.key).join(','))
     .gte('played_at', cutoff.toISOString())
-    .order('played_at', { ascending: true });
+    .order('played_at', { ascending: true })
+    .limit(100000);
 
   if (error || !data) return null;
   return data;

@@ -102,7 +102,7 @@ function parseDateRange(text) {
 }
 
 async function queryWinRate(supabase, { category, item, gameMode, days, dateRange }) {
-  let query = supabase.from('round_logs').select('*').limit(100000);
+  let query = supabase.from('round_logs').select('*');
 
   if (dateRange) {
     query = query.gte('played_at', dateRange.startDate.toISOString()).lte('played_at', dateRange.endDate.toISOString());
@@ -121,7 +121,7 @@ async function queryWinRate(supabase, { category, item, gameMode, days, dateRang
     query = query.eq('mvp_equipped_weapon', item);
   }
 
-  const { data, error } = await query.order('played_at', { ascending: true });
+  const { data, error } = await query.order('played_at', { ascending: true }).limit(100000);
   if (error) return null;
   return data ?? [];
 }

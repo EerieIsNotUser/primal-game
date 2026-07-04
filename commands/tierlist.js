@@ -30,7 +30,8 @@ async function fetchTopMvp(supabase, field, startDate, endDate, limit = 10) {
     .select(field)
     .gte('played_at', startDate.toISOString())
     .lte('played_at', endDate.toISOString())
-    .not(field, 'is', null);
+    .not(field, 'is', null)
+    .limit(100000);
 
   if (error || !data) return [];
 
@@ -51,7 +52,8 @@ async function fetchTopPickups(supabase, startDate, endDate) {
     .from('round_logs')
     .select(PICKUP_FIELDS.map(f => f.field).join(', '))
     .gte('played_at', startDate.toISOString())
-    .lte('played_at', endDate.toISOString());
+    .lte('played_at', endDate.toISOString())
+    .limit(100000);
 
   if (error || !data) return [];
 
@@ -71,7 +73,7 @@ async function fetchTopPickups(supabase, startDate, endDate) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('tierlist')
-    .setDescription('View ranked tier list for weapons, vehicles and pickups')
+    .setDescription('View ranked tier list for weapons, vehicles and item pickups')
     .addStringOption(opt =>
       opt.setName('dates')
         .setDescription('Date range e.g. "January 15th through May 30th" (default: past 7 days)')

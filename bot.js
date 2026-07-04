@@ -416,29 +416,34 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
     ? new Date(req.body.time * 1000).toISOString()
     : new Date().toISOString();
 
+  // Sanitise numeric fields — KKG's script can send NaN (e.g. 0/0 average level)
+  // which Supabase rejects for numeric columns. Replace NaN with null.
+  const safeNum = (v) => (v == null || (typeof v === 'number' && isNaN(v))) ? null : v;
+  const safeInt = (v, fallback = 0) => (v == null || (typeof v === 'number' && isNaN(v))) ? fallback : v;
+
   const { error } = await supabase.from('round_logs').insert({
     played_at:    roundEndTime,
     received_at:  new Date().toISOString(),
     place_id:     req.body?.placeId ?? null,
     round_result: normalisedResult,
-    average_level: Round_AverageLevel ?? null,
-    number_of_players: Round_NumberOfPlayers ?? null,
-    game_mode: Round_Game_Mode ?? null,
-    map: Round_Map,
-    atmosphere_type: Round_AtmosphereType ?? null,
-    dino_player_average_level: Round_DinoPlayerAverageLevel ?? null,
-    num_players_with_medkits: Round_NumPlayers_WithMedkits ?? 0,
-    num_players_with_toolkits: Round_NumPlayers_WithToolkits ?? 0,
-    num_players_with_fuelcans: Round_NumPlayers_WithFuelcans ?? 0,
-    num_players_with_dinotrackers: Round_NumPlayers_WithDinoTrackers ?? 0,
-    num_players_with_mines: Round_NumPlayers_WithMines ?? 0,
-    num_players_with_gamepass_weapons: Round_NumPlayers_WithGamepassWeapons ?? 0,
+    average_level:             safeNum(Round_AverageLevel),
+    number_of_players:         safeNum(Round_NumberOfPlayers),
+    game_mode:                 Round_Game_Mode ?? null,
+    map:                       Round_Map,
+    atmosphere_type:           Round_AtmosphereType ?? null,
+    dino_player_average_level: safeNum(Round_DinoPlayerAverageLevel),
+    num_players_with_medkits:      safeInt(Round_NumPlayers_WithMedkits),
+    num_players_with_toolkits:     safeInt(Round_NumPlayers_WithToolkits),
+    num_players_with_fuelcans:     safeInt(Round_NumPlayers_WithFuelcans),
+    num_players_with_dinotrackers: safeInt(Round_NumPlayers_WithDinoTrackers),
+    num_players_with_mines:        safeInt(Round_NumPlayers_WithMines),
+    num_players_with_gamepass_weapons: safeInt(Round_NumPlayers_WithGamepassWeapons),
     dinosaurs_used: Array.isArray(Round_DinosaursUsed) ? Round_DinosaursUsed : (Round_DinosaursUsed ? [Round_DinosaursUsed] : null),
     vehicles_used: Array.isArray(Round_VehiclesUsed) ? Round_VehiclesUsed : null,
-    weapons_used: Array.isArray(Round_WeaponsUsed) ? Round_WeaponsUsed : null,
+    weapons_used:  Array.isArray(Round_WeaponsUsed)  ? Round_WeaponsUsed  : null,
     mvp_equipped_vehicle: Round_MVP_EquippedVehicle ?? null,
-    mvp_equipped_weapon: Round_MVP_EquippedWeapon ?? null,
-    mvp_damage: Round_MVP_Damage ?? null,
+    mvp_equipped_weapon:  Round_MVP_EquippedWeapon  ?? null,
+    mvp_damage:           safeNum(Round_MVP_Damage),
   });
 
   if (error) {
