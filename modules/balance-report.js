@@ -107,7 +107,7 @@ async function buildReport(supabase) {
   const volDelta = lastWeek.length > 0
     ? Math.round(((thisWeek.length - lastWeek.length) / lastWeek.length) * 100)
     : null;
-  const volStr = volDelta === null
+  const volStr = volDelta === null || lastWeek.length < 50
     ? `${thisWeek.length.toLocaleString()} rounds`
     : `${thisWeek.length.toLocaleString()} (${volDelta > 0 ? '+' : ''}${volDelta}% WoW)`;
 
@@ -139,7 +139,11 @@ async function buildReport(supabase) {
       { title: 'Best Map',        lines: [bestMap ? `${bestMap[0]} (${bestMap[1].total}r)` : '—']   },
       { title: 'Top MVP Weapon',  lines: [topWeapons[0]  ? `${topWeapons[0][0]} (${topWeapons[0][1]}x)`   : '—'] },
       { title: 'Top MVP Vehicle', lines: [topVehicles[0] ? `${topVehicles[0][0]} (${topVehicles[0][1]}x)` : '—'] },
-      { title: 'Item Adoption',   lines: [adoptionStr]                                               },
+      { title: 'Item Adoption',
+        lines: adoption
+          ? adoption.slice(0, 3).map(a => `${a.label}: ${a.pct}%`)
+          : ['—']
+      },
     ],
     note: winDelta !== null && Math.abs(winDelta) >= 5
       ? `Dino win rate shifted ${winDelta > 0 ? 'up' : 'down'} ${Math.abs(winDelta)} pts week over week — worth reviewing.`

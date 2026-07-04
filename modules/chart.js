@@ -606,11 +606,7 @@ async function buildStatCard({
 
     const textStartX = px + (accent ? 20 : 16);
 
-    const panelIcon = panel.title.toLowerCase().includes('won') ? '+'
-      : panel.title.toLowerCase().includes('lost') ? '-'
-      : panel.title.toLowerCase().includes('map') ? '*'
-      : panel.title.toLowerCase().includes('dino') ? 'D'
-      : null;
+    const panelIcon = null;
 
     panelsSvg += `
       <text x="${textStartX}" y="${py + 26}"
