@@ -22,11 +22,11 @@ const { buildLineChartImage, buildDualAxisChartImage, buildChartCard, bucketRoun
 const VEHICLES = ['ATV', 'Golf Cart', 'Jeep', 'Hypercar', 'Pickup Truck', 'Police Car', 'Pumpkin Wagon', 'Buggy', 'Hybrid', 'Banana Car', 'Go-Kart', 'Bush Car', 'Muscle Car', 'Ambulance', 'Tow Truck', 'MRAP', 'Warthog', 'The Hornet', 'Humvee', 'Cyber-Beast', 'Monster Truck', 'Scrapper', 'Lunar Rover'];
 const WEAPONS = ['Pistol', 'Shotgun', 'MP5', 'Light Sniper', 'AR-15', 'AK-47', 'Crossbow', 'Heavy Sniper', 'AR-Dino', 'AR-Uni', 'P90', 'Water Gun', 'Raygun', 'Scar', 'Trike Shotgun', 'Minigun', 'IWS 2000', 'LMG', 'Deagle', 'Railgun', 'Plasma Rifle', 'Flamethrower', 'Tri-Beam', 'Scrapyard Shotgun', 'SPAS-12'];
 
-const MONTH_RANGES = [
-  { label: 'Past Month', value: '1' },
-  { label: 'Past 3 Months', value: '3' },
-  { label: 'Past 6 Months', value: '6' },
-  { label: 'Past 12 Months', value: '12' },
+const WIN_RATE_DAYS = [
+  { label: 'Past 7 Days',  value: '7'  },
+  { label: 'Past 14 Days', value: '14' },
+  { label: 'Past 30 Days', value: '30' },
+  { label: 'Past 90 Days', value: '90' },
 ];
 
 function buildDaysButtonRow(activeDays) {
@@ -93,37 +93,40 @@ function buildItemSelectRow(category) {
   );
 }
 
-function buildMonthRangeSelectRow() {
+function buildWinRateDaysSelectRow() {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId('mapchart_range_select')
       .setPlaceholder('Choose a time range')
-      .addOptions(MONTH_RANGES.map(r => ({ label: r.label, value: r.value })))
+      .addOptions(WIN_RATE_DAYS.map(r => ({ label: r.label, value: r.value })))
   );
 }
 
-// Bucket round_logs rows into monthly win-rate values for a single item.
-function bucketWinRateByMonth(rows, months) {
-  const buckets = new Map(); // "YYYY-MM" -> { wins, total }
-  const now = new Date();
+// Bucket round_logs rows into daily win-rate values for a single item.
+function bucketWinRateByDay(rows, days) {
+  const now = Date.now();
+  const buckets = [];
 
-  for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    buckets.set(key, { wins: 0, total: 0, label: d.toLocaleDateString('en-US', { month: 'short' }) });
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now - i * 24 * 60 * 60 * 1000);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const label = `${d.getMonth() + 1}/${d.getDate()}`;
+    buckets.push({ key, label, wins: 0, total: 0 });
   }
+
+  const bucketMap = new Map(buckets.map(b => [b.key, b]));
 
   for (const row of rows) {
     const d = new Date(row.played_at);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    if (!buckets.has(key)) continue;
-    const bucket = buckets.get(key);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const bucket = bucketMap.get(key);
+    if (!bucket) continue;
     bucket.total++;
     if (row.round_result === 'SurvivorWin') bucket.wins++;
   }
 
-  const labels = [...buckets.values()].map(b => b.label);
-  const data = [...buckets.values()].map(b => (b.total > 0 ? Math.round((b.wins / b.total) * 100) : 0));
+  const labels = buckets.map(b => b.label);
+  const data = buckets.map(b => (b.total > 0 ? Math.round((b.wins / b.total) * 100) : 0));
   return { labels, data };
 }
 
@@ -284,7 +287,7 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
   return interaction.editReply({ content, files: [attachment], components: [buildDaysButtonRow(days), buildTypeSelectRow()] });
 }
 
-async function renderWinRateOverTime(interaction, supabase, category, item, months) {
+async function renderWinRateOverTime(interaction, supabase, category, item, days) {
   if (category === 'dino') {
     return interaction.editReply({
       content: `❌ Dino win rate isn't available yet — no dino tracking exists in the current data. Flagged for KKG.`,
@@ -292,8 +295,7 @@ async function renderWinRateOverTime(interaction, supabase, category, item, mont
     });
   }
 
-  const cutoff = new Date();
-  cutoff.setMonth(cutoff.getMonth() - months);
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
   let query = supabase.from('round_logs').select('round_result, played_at').gte('played_at', cutoff.toISOString());
   query = category === 'vehicle' ? query.eq('mvp_equipped_vehicle', item) : query.eq('mvp_equipped_weapon', item);
@@ -307,15 +309,15 @@ async function renderWinRateOverTime(interaction, supabase, category, item, mont
     });
   }
 
-  const { labels, data } = bucketWinRateByMonth(rows, months);
-  const chartBuffer = await buildLineChartImage(labels, [{ label: `${item} Win Rate`, data }], null);
+  const { labels, data } = bucketWinRateByDay(rows, days);
+  const chartBuffer = await buildLineChartImage(labels, [{ label: `${item} Win Rate %`, data }], null);
   const buffer = await buildChartCard(chartBuffer, {
     title: `${item} — Win Rate Over Time`,
-    subtitle: `Primal Pursuit · ${category === 'vehicle' ? 'Vehicle' : 'Weapon'} · Past ${months} Month${months > 1 ? 's' : ''}`,
+    subtitle: `Primal Pursuit · ${category === 'vehicle' ? 'Vehicle' : 'Weapon'} · Past ${days} Days`,
     stats: [
       { label: 'Rounds Sampled', value: rows.length.toLocaleString(), color: '#5865F2' },
     ],
-    lookback: `Past ${months} Month${months > 1 ? 's' : ''}`,
+    lookback: `Past ${days} Days`,
   });
   const attachment = new AttachmentBuilder(buffer, { name: 'winratechart.png' });
 
@@ -394,13 +396,13 @@ module.exports = {
       session.item = interaction.values[0];
       session.step = 'range';
       setSession(interaction.message.id, session);
-      return interaction.update({ content: 'Choose a time range:', embeds: [], files: [], components: [buildMonthRangeSelectRow()] });
+      return interaction.update({ content: 'Choose a time range:', embeds: [], files: [], components: [buildWinRateDaysSelectRow()] });
     }
 
     if (interaction.customId === 'mapchart_range_select') {
-      const months = parseInt(interaction.values[0], 10);
+      const days = parseInt(interaction.values[0], 10);
       await interaction.deferUpdate();
-      return renderWinRateOverTime(interaction, supabase, session.category, session.item, months);
+      return renderWinRateOverTime(interaction, supabase, session.category, session.item, days);
     }
   },
 };
