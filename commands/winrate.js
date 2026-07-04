@@ -15,8 +15,8 @@ const { buildWinRateCard } = require('../modules/chart');
 //     MVP, what % were SurvivorWin" — an MVP-correlation proxy, NOT true
 //     per-item usage win rate (that data doesn't exist in the current
 //     payload — no per-player/per-item win-loss tracking).
-//   - Dinos: PLACEHOLDER ONLY. No dino identity field exists anywhere in
-//     the current round_logs schema.
+//   - Dinos: presence-based win rate — "rounds where this dino was present,
+//     what % ended in DinoWin". Not per-player identity but valid as a proxy.
 //   - Pickups: not trackable per-item — only round-level adoption counts
 //     exist, not tied to a specific MVP.
 
@@ -102,7 +102,8 @@ function parseDateRange(text) {
 }
 
 async function queryWinRate(supabase, { category, item, gameMode, days, dateRange }) {
-  let query = supabase.from('round_logs').select('*');
+  let query = supabase.from('round_logs').select('*')
+    .neq('place_id', '100026158235338');
 
   if (dateRange) {
     query = query.gte('played_at', dateRange.startDate.toISOString()).lte('played_at', dateRange.endDate.toISOString());
@@ -119,6 +120,8 @@ async function queryWinRate(supabase, { category, item, gameMode, days, dateRang
     query = query.eq('mvp_equipped_vehicle', item);
   } else if (category === 'weapon') {
     query = query.eq('mvp_equipped_weapon', item);
+  } else if (category === 'dino') {
+    query = query.contains('dinosaurs_used', [item]);
   }
 
   const { data, error } = await query.order('played_at', { ascending: true }).limit(100000);
@@ -135,6 +138,7 @@ async function queryAllTimeBaseline(supabase, { category, item, gameMode, exclud
   if (gameMode && gameMode !== 'all') baseQuery = baseQuery.eq('game_mode', gameMode);
   if (category === 'vehicle') baseQuery = baseQuery.eq('mvp_equipped_vehicle', item);
   else if (category === 'weapon') baseQuery = baseQuery.eq('mvp_equipped_weapon', item);
+  else if (category === 'dino') baseQuery = baseQuery.contains('dinosaurs_used', [item]);
 
   if (excludeRange) {
     // Two separate count queries (before range, after range) since Supabase
@@ -146,6 +150,7 @@ async function queryAllTimeBaseline(supabase, { category, item, gameMode, exclud
     if (gameMode && gameMode !== 'all') { bq = bq.eq('game_mode', gameMode); aq = aq.eq('game_mode', gameMode); }
     if (category === 'vehicle') { bq = bq.eq('mvp_equipped_vehicle', item); aq = aq.eq('mvp_equipped_vehicle', item); }
     else if (category === 'weapon') { bq = bq.eq('mvp_equipped_weapon', item); aq = aq.eq('mvp_equipped_weapon', item); }
+    else if (category === 'dino') { bq = bq.contains('dinosaurs_used', [item]); aq = aq.contains('dinosaurs_used', [item]); }
 
     bq = bq.lt('played_at', excludeRange.startDate.toISOString());
     aq = aq.gt('played_at', excludeRange.endDate.toISOString());
@@ -214,7 +219,7 @@ module.exports = {
         .setDescription('What to check win rate for')
         .setRequired(true)
         .addChoices(
-          { name: 'Dino (placeholder — no data yet)', value: 'dino' },
+          { name: 'Dino (presence-based win rate)', value: 'dino' },
           { name: 'Vehicle (MVP-correlation)', value: 'vehicle' },
           { name: 'Weapon (MVP-correlation)', value: 'weapon' },
         )
@@ -268,12 +273,9 @@ module.exports = {
     const datesInput   = interaction.options.getString('dates');
     const days         = interaction.options.getString('time_range') ?? '30';
 
-    if (category === 'dino') {
-      return interaction.editReply(
-        `❌ Dino win rate isn't available yet — the current round logging doesn't track which dino was played. ` +
-        `This is a known gap. Use \`/testwinrate\` to preview this feature with synthetic data.`
-      );
-    }
+    // Dino win rate uses dinosaurs_used array — "rounds where this dino was
+    // present, what % ended in DinoWin". Not per-player identity, but a valid
+    // presence-based proxy for dino performance.
 
     let dateRange = null;
     if (datesInput) {
@@ -296,7 +298,10 @@ module.exports = {
       return interaction.editReply(`No rounds found for **${item}** with the selected filters.`);
     }
 
-    const winRate = computeWinRate(rows);
+    const isDino = category === 'dino';
+    const winRate = isDino
+      ? rows.filter(r => r.round_result === 'DinoWin').length / rows.length
+      : computeWinRate(rows);
     const winRatePct = Math.round(winRate * 100);
 
     const periodLabel = dateRange
@@ -304,7 +309,7 @@ module.exports = {
       : TIME_RANGES.find(t => t.value === days)?.name ?? 'selected period';
 
     const gameModeLabel = gameMode ?? 'All Modes';
-    const categoryLabel = category === 'vehicle' ? 'Car' : 'Gun';
+    const categoryLabel = category === 'vehicle' ? 'Car' : category === 'dino' ? 'Dino' : 'Gun';
 
     // ── Statistical significance check vs all-time baseline ──────────────
     const excludeRange = dateRange ?? (days !== 'all' ? {
@@ -351,7 +356,10 @@ module.exports = {
     }
     const bestMapEntry = [...mapWinRates.entries()]
       .filter(([, v]) => v.total >= 5)
-      .sort((a, b) => (b[1].wins / b[1].total) - (a[1].wins / a[1].total))[0];
+      .sort((a, b) => {
+        if (isDino) return (b[1].total - b[1].wins) / b[1].total - (a[1].total - a[1].wins) / a[1].total;
+        return (b[1].wins / b[1].total) - (a[1].wins / a[1].total);
+      })[0];
     const bestMap = bestMapEntry ? {
       name:           bestMapEntry[0],
       survivorWinPct: Math.round((bestMapEntry[1].wins / bestMapEntry[1].total) * 100),
@@ -374,14 +382,19 @@ module.exports = {
 
     // ── Win rate card ─────────────────────────────────────────────────────
     const survivorWins = rows.filter(r => r.round_result === 'SurvivorWin').length;
+    const dinoWins     = rows.length - survivorWins;
+
+    // For dinos: flip the card so DinoWin is the "good" side (left, green)
+    const cardSurvivorWins = isDino ? dinoWins     : survivorWins;
+    const cardDinoWins     = isDino ? survivorWins : dinoWins;
 
     const cardBuffer = await buildWinRateCard({
       itemName:      item,
-      category,
+      category:      isDino ? 'dino' : category,
       lookback:      periodLabel,
       rounds:        rows.length,
-      survivorWins,
-      dinoWins:      rows.length - survivorWins,
+      survivorWins:  cardSurvivorWins,
+      dinoWins:      cardDinoWins,
       bestMap,
       coItem:        coItemEntry ? { name: coItemEntry[0], count: coItemEntry[1] } : null,
       baseline:      baseline && baseline.total >= 5 ? { rate: baseline.wins / baseline.total, rounds: baseline.total } : null,

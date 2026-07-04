@@ -97,6 +97,7 @@ async function fetchRoundsForPeriod(supabase, days) {
     .from('round_logs')
     .select('map, round_result, played_at')
     .gte('played_at', cutoff.toISOString())
+    .neq('place_id', '100026158235338')
     .order('played_at', { ascending: true })
     .limit(100000);
 

@@ -63,6 +63,7 @@ client.once('ready', async () => {
   require('./modules/bot-logs')(client, { supabase });
   require('./modules/bot-status')(client, { supabase });
   require('./modules/bot-errors')(client, { supabase });
+  require('./modules/rollup')(client, { supabase });
 
 });
 
@@ -361,7 +362,8 @@ async function checkAndPostSummary() {
     const { count } = await supabase
       .from('round_logs')
       .select('*', { count: 'exact', head: true })
-      .gt('played_at', lastSummaryAt);
+      .gt('played_at', lastSummaryAt)
+      .neq('place_id', '100026158235338');
 
     if ((count ?? 0) < SUMMARY_BATCH_SIZE) return;
 
@@ -369,6 +371,7 @@ async function checkAndPostSummary() {
       .from('round_logs')
       .select('*')
       .gt('played_at', lastSummaryAt)
+      .neq('place_id', '100026158235338')
       .order('played_at', { ascending: true })
       .limit(SUMMARY_BATCH_SIZE);
 

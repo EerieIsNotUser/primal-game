@@ -130,19 +130,41 @@ function bucketWinRateByDay(rows, days) {
   return { labels, data };
 }
 
-// Fetch round_result + map for the past 6 months — used as the baseline
-// for detecting "noticeable" popularity shifts in the selected window.
+// Fetch map + result data for the past 6 months — unions raw rows (recent)
+// with round_stats_daily aggregates (historical, post-rollup).
 async function getSixMonthBaseline(supabase) {
-  const cutoff = new Date();
-  cutoff.setMonth(cutoff.getMonth() - 6);
+  const sixMonthCutoff = new Date();
+  sixMonthCutoff.setMonth(sixMonthCutoff.getMonth() - 6);
 
-  const { data, error } = await supabase
+  const retentionCutoff = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+
+  // Raw rows within retention window
+  const { data: rawRows, error: rawErr } = await supabase
     .from('round_logs')
     .select('map, round_result')
-    .gte('played_at', cutoff.toISOString());
+    .gte('played_at', sixMonthCutoff.toISOString())
+    .neq('place_id', '100026158235338')
+    .limit(100000);
 
-  if (error || !data) return null;
-  return data;
+  if (rawErr) return null;
+
+  // Aggregate rows older than retention window
+  const { data: aggRows, error: aggErr } = await supabase
+    .from('round_stats_daily')
+    .select('map, dino_wins, survivor_wins')
+    .gte('day', sixMonthCutoff.toISOString().slice(0, 10))
+    .lt('day', retentionCutoff.toISOString().slice(0, 10));
+
+  if (aggErr) return null;
+
+  // Expand aggregate rows into synthetic row objects so mapShareOf() works unchanged
+  const expandedAggRows = [];
+  for (const agg of (aggRows ?? [])) {
+    for (let i = 0; i < agg.dino_wins; i++)     expandedAggRows.push({ map: agg.map, round_result: 'DinoWin' });
+    for (let i = 0; i < agg.survivor_wins; i++) expandedAggRows.push({ map: agg.map, round_result: 'SurvivorWin' });
+  }
+
+  return [...(rawRows ?? []), ...expandedAggRows];
 }
 
 function mapShareOf(rows) {
@@ -231,6 +253,7 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
     .select('map, played_at, round_result')
     .gte('played_at', startDate.toISOString())
     .lte('played_at', endDate.toISOString())
+    .neq('place_id', '100026158235338')
     .limit(100000);
 
   if (error) return interaction.editReply('❌ Something went wrong fetching round data.');
@@ -293,13 +316,15 @@ async function renderWinRateOverTime(interaction, supabase, category, item, days
   const cutoffISO = cutoff.toISOString();
 
   // Fetch item-specific rows (for win rate line)
-  let itemQuery = supabase.from('round_logs').select('round_result, played_at').gte('played_at', cutoffISO);
+  let itemQuery = supabase.from('round_logs').select('round_result, played_at')
+    .gte('played_at', cutoffISO)
+    .neq('place_id', '100026158235338');
   itemQuery = category === 'vehicle' ? itemQuery.eq('mvp_equipped_vehicle', item) : itemQuery.eq('mvp_equipped_weapon', item);
 
   // Fetch all rounds in window (for total volume bars)
   const [{ data: itemRows, error: itemErr }, { data: allRows, error: allErr }] = await Promise.all([
     itemQuery.limit(100000),
-    supabase.from('round_logs').select('played_at').gte('played_at', cutoffISO).limit(100000),
+    supabase.from('round_logs').select('played_at').gte('played_at', cutoffISO).neq('place_id', '100026158235338').limit(100000),
   ]);
 
   if (itemErr || allErr) return interaction.editReply('❌ Something went wrong fetching round data.');

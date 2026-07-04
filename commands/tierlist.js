@@ -31,6 +31,7 @@ async function fetchTopMvp(supabase, field, startDate, endDate, limit = 10) {
     .gte('played_at', startDate.toISOString())
     .lte('played_at', endDate.toISOString())
     .not(field, 'is', null)
+    .neq('place_id', '100026158235338')
     .limit(100000);
 
   if (error || !data) return [];
@@ -53,6 +54,7 @@ async function fetchTopPickups(supabase, startDate, endDate) {
     .select(PICKUP_FIELDS.map(f => f.field).join(', '))
     .gte('played_at', startDate.toISOString())
     .lte('played_at', endDate.toISOString())
+    .neq('place_id', '100026158235338')
     .limit(100000);
 
   if (error || !data) return [];

@@ -38,7 +38,8 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode, days
     .from('round_logs')
     .select('map, round_result, game_mode')
     .gte('played_at', startDate.toISOString())
-    .lte('played_at', endDate.toISOString());
+    .lte('played_at', endDate.toISOString())
+    .neq('place_id', '100026158235338');
 
   if (gameMode) query = query.eq('game_mode', gameMode);
 
