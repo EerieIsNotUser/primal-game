@@ -986,6 +986,7 @@ async function buildTierListCard({
   lookback    = '',
   items       = [],
   accentColor = '#5865F2',
+  category    = null,
 } = {}) {
   const CARD_W   = 900;
   const HEADER_H = 90;
@@ -994,32 +995,65 @@ async function buildTierListCard({
   const ICON_SZ  = 48;
   const ICON_X   = 14;
   const ICON_Y   = 21;
-  const BODY_PAD = 24;
-  const ROW_H    = 44;
-  const ROW_GAP  = 6;
+  const PAD      = 16;
+  const P_GAP    = 10;
 
-  const capped   = items.slice(0, 10);
-  const BODY_H   = BODY_PAD + capped.length * (ROW_H + ROW_GAP) - (capped.length > 0 ? ROW_GAP : 0) + BODY_PAD;
-  const CARD_H   = HEADER_H + BODY_H + FOOTER_H;
-  const FOOTER_Y = HEADER_H + BODY_H;
+  const INNER_W  = CARD_W - 2 * PAD;
+  const W1       = Math.floor(INNER_W * 0.36);
+  const W2       = Math.floor(INNER_W * 0.33);
+  const W3       = INNER_W - W1 - W2 - 2 * P_GAP;
+  const H1       = 265;
+  const H2       = 225;
+  const H3       = 205;
+
+  const PODIUM_BOTTOM = HEADER_H + PAD + H1;
+  const X2 = PAD;
+  const X1 = X2 + W2 + P_GAP;
+  const X3 = X1 + W1 + P_GAP;
+  const Y1 = HEADER_H + PAD;
+  const Y2 = PODIUM_BOTTOM - H2;
+  const Y3 = PODIUM_BOTTOM - H3;
+
+  const capped      = items.slice(0, 10);
+  const podiumItems = capped.slice(0, 3);
+  const listItems   = capped.slice(3);
+  const maxCount    = capped.length > 0 ? capped[0].count : 1;
+
+  const ROW_H        = 32;
+  const ROW_GAP      = 4;
+  const LIST_START_Y = PODIUM_BOTTOM + 14;
+  const LIST_H       = listItems.length > 0
+    ? listItems.length * (ROW_H + ROW_GAP) - ROW_GAP
+    : 0;
+  const FOOTER_Y     = LIST_START_Y + LIST_H + (listItems.length > 0 ? 14 : 0);
+  const CARD_H       = FOOTER_Y + FOOTER_H;
+
+  const MEDALS = [
+    { color: '#FFD700', label: '1' },
+    { color: '#C0C0C0', label: '2' },
+    { color: '#CD7F32', label: '3' },
+  ];
+  const PODIUM_CFGS = [
+    { x: X1, y: Y1, w: W1, h: H1, medal: MEDALS[0] },
+    { x: X2, y: Y2, w: W2, h: H2, medal: MEDALS[1] },
+    { x: X3, y: Y3, w: W3, h: H3, medal: MEDALS[2] },
+  ];
 
   // ── Icon ──────────────────────────────────────────────────────────────
   let iconBuffer = null;
   try {
     const raw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
       .resize(ICON_SZ, ICON_SZ, { fit: 'cover' }).png().toBuffer();
-    const iconMask = await sharp(Buffer.from(
+    const mask = await sharp(Buffer.from(
       `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">` +
       `<rect width="${ICON_SZ}" height="${ICON_SZ}" rx="10" fill="white"/></svg>`
     )).png().toBuffer();
-    iconBuffer = await sharp(raw).composite([{ input: iconMask, blend: 'dest-in' }]).png().toBuffer();
+    iconBuffer = await sharp(raw).composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
   } catch (_) {}
 
   // ── Header stat boxes ─────────────────────────────────────────────────
-  const BOX_W   = 160;
-  const BOX_H   = 62;
-  const BOX_GAP = 10;
-  const BOX_Y   = Math.round((HEADER_H - BOX_H) / 2);
+  const BOX_W = 160, BOX_H = 62, BOX_GAP = 10;
+  const BOX_Y = Math.round((HEADER_H - BOX_H) / 2);
   const cappedS = stats.slice(0, 3);
   const totalBW = cappedS.length * BOX_W + Math.max(0, cappedS.length - 1) * BOX_GAP;
   let statBoxesSvg = '';
@@ -1038,40 +1072,98 @@ async function buildTierListCard({
   const titleEl    = title    ? `<text x="${textX}" y="42" fill="#e8e9eb" font-size="20" font-weight="bold" font-family="DejaVu Sans">${escapeXml(title)}</text>` : '';
   const subtitleEl = subtitle ? `<text x="${textX}" y="63" fill="#b5b9bf" font-size="14" font-family="DejaVu Sans">${escapeXml(subtitle)}</text>` : '';
 
-  // ── Rows ──────────────────────────────────────────────────────────────
-  const bodyStartY = HEADER_H + BODY_PAD;
-  const maxCount   = capped.length > 0 ? (capped[0].count || 1) : 1;
-  const NAME_X     = BODY_PAD + 46;
-  const BAR_START  = 330;
-  const BAR_MAX_W  = CARD_W - BAR_START - BODY_PAD - 70;
-  const COUNT_X    = CARD_W - BODY_PAD;
-  const RANK_COLS  = ['#FFD700', '#C0C0C0', '#CD7F32'];
+  // ── Podium panels ─────────────────────────────────────────────────────
+  const composites = [];
+  if (iconBuffer) composites.push({ input: iconBuffer, top: ICON_Y, left: ICON_X });
 
-  let rowsSvg = '';
-  capped.forEach((item, i) => {
-    const rowY    = bodyStartY + i * (ROW_H + ROW_GAP);
-    const barW    = Math.max(4, Math.round((item.count / maxCount) * BAR_MAX_W));
-    const rankCol = RANK_COLS[i] ?? '#4a4a4a';
-    const nameStr = item.name.length > 24 ? item.name.slice(0, 23) + '…' : item.name;
+  let podiumSvg = '';
+  for (let i = 0; i < Math.min(podiumItems.length, 3); i++) {
+    const item    = podiumItems[i];
+    const cfg     = PODIUM_CFGS[i];
+    const medal   = cfg.medal;
+    const IPADY   = 38;
+    const IPADB   = 46;
+    const IPADX   = 14;
+    const imgX    = cfg.x + IPADX;
+    const imgY    = cfg.y + IPADY;
+    const imgW    = cfg.w - IPADX * 2;
+    const imgH    = cfg.h - IPADY - IPADB;
+    const nameStr = item.name.length > 18 ? item.name.slice(0, 17) + '…' : item.name;
 
-    rowsSvg += `
-      <rect x="${BODY_PAD}" y="${rowY}" width="${CARD_W - 2 * BODY_PAD}" height="${ROW_H}"
-            rx="8" fill="#2b2d31" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
-      <circle cx="${BODY_PAD + 18}" cy="${rowY + ROW_H / 2}" r="14" fill="${rankCol}" opacity="0.9"/>
-      <text x="${BODY_PAD + 18}" y="${rowY + ROW_H / 2 + 5}"
-            fill="${i < 3 ? '#111214' : '#e8e9eb'}" font-size="13" font-weight="bold"
-            font-family="DejaVu Sans" text-anchor="middle">${i + 1}</text>
-      <text x="${NAME_X}" y="${rowY + ROW_H / 2 + 5}"
-            fill="#e8e9eb" font-size="15" font-family="DejaVu Sans">${escapeXml(nameStr)}</text>
-      <rect x="${BAR_START}" y="${rowY + 14}" width="${BAR_MAX_W}" height="16" rx="4" fill="rgba(255,255,255,0.06)"/>
-      <rect x="${BAR_START}" y="${rowY + 14}" width="${barW}" height="16" rx="4" fill="${accentColor}" opacity="0.8"/>
-      <text x="${COUNT_X}" y="${rowY + ROW_H / 2 + 5}"
-            fill="#72767d" font-size="13" font-family="DejaVu Sans" text-anchor="end">${escapeXml(String(item.count))}x</text>`;
+    podiumSvg += `
+      <rect x="${cfg.x}" y="${cfg.y}" width="${cfg.w}" height="${cfg.h}" rx="8"
+            fill="#111214" stroke="${medal.color}" stroke-width="1" stroke-opacity="0.35"/>
+      <rect x="${cfg.x}" y="${cfg.y}" width="5" height="${cfg.h}" rx="3"
+            fill="${medal.color}" opacity="0.7"/>
+      <circle cx="${cfg.x + 22}" cy="${cfg.y + 20}" r="13"
+              fill="${medal.color}" opacity="0.12"/>
+      <circle cx="${cfg.x + 22}" cy="${cfg.y + 20}" r="13"
+              fill="none" stroke="${medal.color}" stroke-width="1.5" opacity="0.5"/>
+      <text x="${cfg.x + 22}" y="${cfg.y + 25}"
+            fill="${medal.color}" font-size="13" font-weight="bold"
+            font-family="DejaVu Sans" text-anchor="middle">${medal.label}</text>
+      <rect x="${imgX}" y="${imgY}" width="${imgW}" height="${imgH}" rx="5"
+            fill="rgba(255,255,255,0.03)"
+            stroke="rgba(255,255,255,0.07)" stroke-width="1" stroke-dasharray="4 3"/>
+      <text x="${imgX + imgW / 2}" y="${imgY + imgH / 2 - 5}"
+            fill="rgba(255,255,255,0.09)" font-size="11"
+            font-family="DejaVu Sans" text-anchor="middle">Image</text>
+      <text x="${imgX + imgW / 2}" y="${imgY + imgH / 2 + 11}"
+            fill="rgba(255,255,255,0.05)" font-size="10"
+            font-family="DejaVu Sans" text-anchor="middle">Coming Soon</text>
+      <line x1="${cfg.x + 10}" y1="${cfg.y + cfg.h - IPADB + 4}"
+            x2="${cfg.x + cfg.w - 10}" y2="${cfg.y + cfg.h - IPADB + 4}"
+            stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+      <text x="${cfg.x + cfg.w / 2}" y="${cfg.y + cfg.h - 24}"
+            fill="#e8e9eb" font-size="14" font-weight="bold"
+            font-family="DejaVu Sans" text-anchor="middle">${escapeXml(nameStr)}</text>
+      <text x="${cfg.x + cfg.w / 2}" y="${cfg.y + cfg.h - 8}"
+            fill="${medal.color}" font-size="11"
+            font-family="DejaVu Sans" text-anchor="middle">${escapeXml(String(item.count))}×</text>`;
+
+    if (category) {
+      const imgPath = path.join(__dirname, 'assets', 'items', category, `${item.name}.png`);
+      try {
+        const raw = await sharp(imgPath)
+          .resize(imgW - 4, imgH - 4, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+          .png().toBuffer();
+        composites.push({ input: raw, top: imgY + 2, left: imgX + 2 });
+      } catch (_) {}
+    }
+  }
+
+  // ── List rows (4–10) ──────────────────────────────────────────────────
+  let listSvg = '';
+  if (listItems.length > 0) {
+    listSvg += `<line x1="${PAD}" y1="${LIST_START_Y - 7}" x2="${CARD_W - PAD}" y2="${LIST_START_Y - 7}"
+                      stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`;
+  }
+
+  listItems.forEach((item, i) => {
+    const rank     = i + 4;
+    const rowY     = LIST_START_Y + i * (ROW_H + ROW_GAP);
+    const fillW    = Math.round((item.count / maxCount) * (CARD_W - 2 * PAD));
+    const opacity  = (0.04 + (item.count / maxCount) * 0.12).toFixed(3);
+    const nameSafe = item.name.length > 30 ? item.name.slice(0, 29) + '…' : item.name;
+
+    listSvg += `
+      <rect x="${PAD}" y="${rowY}" width="${CARD_W - 2 * PAD}" height="${ROW_H}" rx="5"
+            fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+      <rect x="${PAD}" y="${rowY}" width="${fillW}" height="${ROW_H}" rx="5"
+            fill="${accentColor}" opacity="${opacity}"/>
+      <text x="${PAD + 18}" y="${rowY + 21}"
+            fill="#4a4d5e" font-size="12" font-family="DejaVu Sans"
+            text-anchor="middle">${rank}</text>
+      <text x="${PAD + 34}" y="${rowY + 21}"
+            fill="#e8e9eb" font-size="13" font-family="DejaVu Sans">${escapeXml(nameSafe)}</text>
+      <text x="${CARD_W - PAD - 8}" y="${rowY + 21}"
+            fill="#72767d" font-size="12" font-family="DejaVu Sans"
+            text-anchor="end">${escapeXml(String(item.count))}×</text>`;
   });
 
   // ── Footer ────────────────────────────────────────────────────────────
-  const ftY        = FOOTER_Y + 26;
-  const footerLeft = lookback
+  const ftY         = FOOTER_Y + 26;
+  const footerLeft  = lookback
     ? `<text x="20" y="${ftY}" fill="#72767d" font-size="13" font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>`
     : '';
   const footerRight = `
@@ -1085,21 +1177,18 @@ async function buildTierListCard({
   const cardSvg = `
 <svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
   <rect width="${CARD_W}" height="${HEADER_H}" fill="#1e2024"/>
-  <rect y="${HEADER_H}" width="${CARD_W}" height="${BODY_H}" fill="#15171a"/>
+  <rect y="${HEADER_H}" width="${CARD_W}" height="${CARD_H - HEADER_H - FOOTER_H}" fill="#15171a"/>
   <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#0e0f11"/>
   <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
   <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
   ${statBoxesSvg}
   ${titleEl}
   ${subtitleEl}
-  ${rowsSvg}
+  ${podiumSvg}
+  ${listSvg}
   ${footerLeft}
   ${footerRight}
 </svg>`;
-
-  // ── Composite + rounded corners ───────────────────────────────────────
-  const composites = [];
-  if (iconBuffer) composites.push({ input: iconBuffer, top: ICON_Y, left: ICON_X });
 
   const flat = composites.length > 0
     ? await sharp(Buffer.from(cardSvg)).composite(composites).png().toBuffer()
