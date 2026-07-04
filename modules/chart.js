@@ -235,6 +235,8 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   const plotH = HEIGHT - padding.top - padding.bottom;
 
   const leftMax = Math.ceil(Math.max(1, ...barData) / 10) * 10 || 10;
+  const allLineValues = lineSeries.flatMap(s => s.data);
+  const lineMax = Math.max(1, ...allLineValues);
   const rightMax = Math.ceil(lineMax / 10) * 10 || 10;
 
   function xFor(i) {
@@ -249,8 +251,6 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   // Otherwise use the full left axis scale (map popularity view).
   const barWidth = (plotW / labels.length) * 0.6;
   const barMax = Math.max(1, ...barData);
-  const allLineValues = lineSeries.flatMap(s => s.data);
-  const lineMax = Math.max(1, ...allLineValues);
   const useCapHeight = (barMax / lineMax) > 20;
   let barsSvg = '';
   barData.forEach((v, i) => {
