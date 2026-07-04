@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
 const chrono = require('chrono-node');
-const { buildStatCard } = require('../modules/chart');
+const { buildWinRateCard } = require('../modules/chart');
 
 // ─── /winrate ────────────────────────────────────────────────────────────
 // Filterable win rate query: pick a category (dino/vehicle/weapon), a
@@ -325,87 +325,62 @@ module.exports = {
       }
     }
 
-    // ── Most common map / co-occurring weapon-vehicle ────────────────────
-    const dinoWinRows = rows.filter(r => r.round_result === 'DinoWin');
-    const topVehicleCounts = new Map();
-    const topWeaponCounts = new Map();
-    for (const r of dinoWinRows) {
-      if (r.mvp_equipped_vehicle) topVehicleCounts.set(r.mvp_equipped_vehicle, (topVehicleCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
-      if (r.mvp_equipped_weapon) topWeaponCounts.set(r.mvp_equipped_weapon, (topWeaponCounts.get(r.mvp_equipped_weapon) || 0) + 1);
-    }
-    const topVehicle = [...topVehicleCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-    const topWeapon = [...topWeaponCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-
-    const mapCounts = new Map();
-    const coWeaponCounts = new Map();
+    // ── Co-occurring items ────────────────────────────────────────────────
+    const coWeaponCounts  = new Map();
     const coVehicleCounts = new Map();
     for (const r of rows) {
-      if (r.map) mapCounts.set(r.map, (mapCounts.get(r.map) || 0) + 1);
-      if (category === 'vehicle' && r.mvp_equipped_weapon) coWeaponCounts.set(r.mvp_equipped_weapon, (coWeaponCounts.get(r.mvp_equipped_weapon) || 0) + 1);
-      if (category === 'weapon' && r.mvp_equipped_vehicle) coVehicleCounts.set(r.mvp_equipped_vehicle, (coVehicleCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
+      if (category === 'vehicle' && r.mvp_equipped_weapon)  coWeaponCounts.set(r.mvp_equipped_weapon,  (coWeaponCounts.get(r.mvp_equipped_weapon)  || 0) + 1);
+      if (category === 'weapon'  && r.mvp_equipped_vehicle) coVehicleCounts.set(r.mvp_equipped_vehicle, (coVehicleCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
     }
-    const topMap = [...mapCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-    const topCoWeapon = [...coWeaponCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    const topCoWeapon  = [...coWeaponCounts.entries()].sort((a, b) => b[1] - a[1])[0];
     const topCoVehicle = [...coVehicleCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    const coItemEntry  = category === 'vehicle' ? topCoWeapon : topCoVehicle;
 
-    const coOccurrenceLines = [`Most common map: ${topMap ? `${topMap[0]} (${topMap[1]}x)` : 'No data'}`];
-    if (category === 'vehicle') {
-      coOccurrenceLines.push(`Most common gun alongside this car: ${topCoWeapon ? `${topCoWeapon[0]} (${topCoWeapon[1]}x)` : 'No data'}`);
-    } else {
-      coOccurrenceLines.push(`Most common car alongside this gun: ${topCoVehicle ? `${topCoVehicle[0]} (${topCoVehicle[1]}x)` : 'No data'}`);
+    // ── Best map — proportional survivor win rate ─────────────────────────
+    const mapWinRates = new Map();
+    for (const r of rows) {
+      if (!r.map) continue;
+      if (!mapWinRates.has(r.map)) mapWinRates.set(r.map, { wins: 0, total: 0 });
+      const m = mapWinRates.get(r.map);
+      m.total++;
+      if (r.round_result === 'SurvivorWin') m.wins++;
     }
+    const bestMapEntry = [...mapWinRates.entries()]
+      .filter(([, v]) => v.total >= 5)
+      .sort((a, b) => (b[1].wins / b[1].total) - (a[1].wins / a[1].total))[0];
+    const bestMap = bestMapEntry ? {
+      name:           bestMapEntry[0],
+      survivorWinPct: Math.round((bestMapEntry[1].wins / bestMapEntry[1].total) * 100),
+      rounds:         bestMapEntry[1].total,
+    } : null;
 
-    const mvpBreakdown = dinoWinRows.length > 0
-      ? `Most common MVP car in DinoWin rounds: ${topVehicle ? `${topVehicle[0]} (${topVehicle[1]}x)` : 'No data'}\n` +
-        `Most common MVP gun in DinoWin rounds: ${topWeapon ? `${topWeapon[0]} (${topWeapon[1]}x)` : 'No data'}\n` +
-        `*(not tied to a specific dino — needs dino tracking, see /testwinrate for a preview)*\n\n` +
-        coOccurrenceLines.join('\n') +
-        `\nMost common pickups: not available yet — needs per-MVP pickup tracking (see /testwinrate for a preview)`
-      : 'No DinoWin rounds in this selection to break down.';
+    // ── Level brackets ────────────────────────────────────────────────────
+    const BRACKETS = [
+      { label: '1–20',   min: 1,   max: 20       },
+      { label: '21–40',  min: 21,  max: 40       },
+      { label: '41–100', min: 41,  max: 100      },
+      { label: '100+',   min: 101, max: Infinity },
+    ];
+    const levelBrackets = BRACKETS.map(br => {
+      const brRows  = rows.filter(r => r.average_level != null && r.average_level >= br.min && r.average_level <= br.max);
+      const sWins   = brRows.filter(r => r.round_result === 'SurvivorWin').length;
+      return { label: br.label, total: brRows.length, survivorPct: brRows.length > 0 ? Math.round((sWins / brRows.length) * 100) : 0 };
+    }).filter(br => br.total >= 3);
 
-    // ── Stat card ─────────────────────────────────────────────────────────
-    const winColorHex  = winRatePct >= 55 ? '#57F287' : winRatePct <= 40 ? '#ED4245' : '#FEE75C';
+    // ── Win rate card ─────────────────────────────────────────────────────
+    const survivorWins = rows.filter(r => r.round_result === 'SurvivorWin').length;
 
-    const baselineText = baseline && baseline.total >= 5
-      ? `${Math.round((baseline.wins / baseline.total) * 100)}%  (${baseline.total.toLocaleString()})`
-      : '—';
-
-    let noteText = '';
-    if (significanceNote.includes('SIGNIFICANTLY')) {
-      const baselinePct = baseline ? Math.round((baseline.wins / baseline.total) * 100) : 0;
-      const direction   = winRatePct < baselinePct ? 'below' : 'above';
-      noteText = `Win rate is significantly ${direction} the all-time average of ${baselinePct}% (p < 0.05)`;
-    }
-
-    const coItemName  = category === 'vehicle'
-      ? (topCoWeapon  ? `${topCoWeapon[0]} (${topCoWeapon[1]}x)`   : '—')
-      : (topCoVehicle ? `${topCoVehicle[0]} (${topCoVehicle[1]}x)` : '—');
-    const coItemLabel  = category === 'vehicle' ? 'Co-occurring Gun' : 'Co-occurring Car';
-    const dinoWinLabel = category === 'vehicle' ? 'DinoWin — Top Gun' : 'DinoWin — Top Car';
-    const dinoWinValue = dinoWinRows.length > 0
-      ? (category === 'vehicle'
-          ? (topWeapon  ? `${topWeapon[0]} (${topWeapon[1]}x)`   : '—')
-          : (topVehicle ? `${topVehicle[0]} (${topVehicle[1]}x)` : '—'))
-      : '—';
-
-    const dinoWinCount  = dinoWinRows.length;
-    const dinoLossCount = rows.length - dinoWinRows.length;
-
-    const cardBuffer = await buildStatCard({
-      title:    item,
-      subtitle: `${categoryLabel} · ${gameModeLabel}`,
-      stats: [
-        { label: 'Win Rate', value: `${winRatePct}%`,            color: winColorHex },
-        { label: 'Rounds',   value: rows.length.toLocaleString(), color: '#5865F2'   },
-        { label: 'Baseline', value: baselineText,                 color: '#72767d'   },
-      ],
-      lookback: periodLabel,
-      panels: [
-        { title: 'Best Map',   lines: [topMap ? `${topMap[0]} (${topMap[1]}x)` : '—'] },
-        { title: coItemLabel,  subtitle: `(${rows.length} rounds)`, lines: [coItemName] },
-        { title: dinoWinLabel, subtitle: `(${dinoWinCount} DinoWin)`, lines: [dinoWinValue] },
-      ],
-      note: noteText,
+    const cardBuffer = await buildWinRateCard({
+      itemName:      item,
+      category,
+      lookback:      periodLabel,
+      rounds:        rows.length,
+      survivorWins,
+      dinoWins:      rows.length - survivorWins,
+      bestMap,
+      coItem:        coItemEntry ? { name: coItemEntry[0], count: coItemEntry[1] } : null,
+      baseline:      baseline && baseline.total >= 5 ? { rate: baseline.wins / baseline.total, rounds: baseline.total } : null,
+      levelBrackets,
     });
 
     // ── Attachment ────────────────────────────────────────────────────────

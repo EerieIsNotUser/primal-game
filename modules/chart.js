@@ -1285,4 +1285,241 @@ async function buildWinRateDashboard({
   return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
 }
 
-module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, bucketRoundsByMap, PALETTE, MAP_COLORS };
+/**
+ * Win rate card — item image left, stats right.
+ * Large survivor/dino split bar as visual centerpiece, level brackets below.
+ */
+async function buildWinRateCard({
+  itemName      = '',
+  category      = '',
+  lookback      = '',
+  rounds        = 0,
+  survivorWins  = 0,
+  dinoWins      = 0,
+  bestMap       = null,
+  coItem        = null,
+  baseline      = null,
+  levelBrackets = [],
+  itemImagePath = null,
+} = {}) {
+  const CARD_W   = 1100;
+  const CARD_H   = 500;
+  const FOOTER_H = 40;
+  const FOOTER_Y = CARD_H - FOOTER_H;
+  const CORNER_R = 14;
+  const LEFT_W   = 300;
+  const RIGHT_X  = LEFT_W;
+  const RP       = 28; // right padding
+  const RCX      = RIGHT_X + RP;
+  const RCR      = CARD_W - RP;
+  const RCW      = RCR - RCX;
+
+  const survivorPct = rounds > 0 ? Math.round((survivorWins / rounds) * 100) : 0;
+  const dinoPct     = 100 - survivorPct;
+  const catLabel    = category === 'vehicle' ? 'VEHICLE' : 'WEAPON';
+  const catColor    = category === 'vehicle' ? '#5865F2' : '#ED4245';
+  const coLabel     = category === 'vehicle' ? 'TOP CO-GUN' : 'TOP CO-CAR';
+
+  // ── Left panel ─────────────────────────────────────────────────────────
+  const PH_W = 200, PH_H = 200;
+  const PH_X = Math.floor((LEFT_W - PH_W) / 2);
+  const PH_Y = 133;
+
+  let leftContent = '';
+  let imgComposite = null;
+
+  if (itemImagePath) {
+    try {
+      const raw = await sharp(itemImagePath)
+        .resize(PH_W, PH_H, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+        .png().toBuffer();
+      imgComposite = { input: raw, top: PH_Y, left: PH_X };
+    } catch (_) { itemImagePath = null; }
+  }
+
+  if (!itemImagePath) {
+    leftContent += `
+      <rect x="${PH_X}" y="${PH_Y}" width="${PH_W}" height="${PH_H}" rx="8"
+            fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1" stroke-dasharray="6 4"/>
+      <text x="${Math.floor(LEFT_W / 2)}" y="${PH_Y + PH_H / 2}"
+            fill="rgba(255,255,255,0.12)" font-size="12" font-family="DejaVu Sans"
+            text-anchor="middle">Item Image</text>
+      <text x="${Math.floor(LEFT_W / 2)}" y="${PH_Y + PH_H / 2 + 18}"
+            fill="rgba(255,255,255,0.07)" font-size="11" font-family="DejaVu Sans"
+            text-anchor="middle">Coming Soon</text>`;
+  }
+
+  // item name + category tag on left panel
+  const nameShort = itemName.length > 16 ? itemName.slice(0, 15) + '…' : itemName;
+  leftContent += `
+    <text x="${Math.floor(LEFT_W / 2)}" y="101"
+          fill="#e8e9eb" font-size="20" font-weight="bold" font-family="DejaVu Sans"
+          text-anchor="middle">${escapeXml(nameShort)}</text>
+    <line x1="20" y1="115" x2="${LEFT_W - 20}" y2="115" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+    <rect x="${Math.floor((LEFT_W - 110) / 2)}" y="349" width="110" height="24" rx="5"
+          fill="${catColor}" opacity="0.12"/>
+    <text x="${Math.floor(LEFT_W / 2)}" y="366"
+          fill="${catColor}" font-size="11" font-weight="bold" font-family="DejaVu Sans"
+          letter-spacing="1" text-anchor="middle">${escapeXml(catLabel)}</text>`;
+
+  // ── Split bar ─────────────────────────────────────────────────────────
+  const BAR_Y  = 208;
+  const BAR_H  = 14;
+  const sBarW  = Math.round((survivorPct / 100) * RCW);
+  const dBarW  = RCW - sBarW;
+
+  // ── Info row ──────────────────────────────────────────────────────────
+  const INFO_LABEL_Y = 252;
+  const INFO_VAL_Y   = 278;
+  const INFO_SUB_Y   = 294;
+  const COL_W        = Math.floor(RCW / 3);
+
+  const bestMapStr = bestMap ? bestMap.name : '—';
+  const bestMapSub = bestMap ? `${bestMap.survivorWinPct}% surv · ${bestMap.rounds}r` : '';
+  const coItemStr  = coItem  ? (coItem.name.length > 13 ? coItem.name.slice(0, 12) + '…' : coItem.name) : '—';
+  const coItemSub  = coItem  ? `${coItem.count}x MVP rounds` : '';
+  const baseStr    = baseline ? `${Math.round(baseline.rate * 100)}%` : '—';
+  const baseSub    = baseline ? `${baseline.rounds.toLocaleString()} rounds` : 'not enough data';
+
+  // ── Level brackets ────────────────────────────────────────────────────
+  const BR_Y       = 318;
+  const BR_H       = 22;
+  const BR_GAP     = 5;
+  const BR_BAR_W   = Math.floor(RCW * 0.42);
+  const BR_LABEL_W = 52;
+  const BR_BAR_X   = RCX + BR_LABEL_W;
+
+  let bracketsSvg = '';
+  if (levelBrackets.length > 0) {
+    bracketsSvg += `
+      <line x1="${RCX}" y1="${BR_Y - 10}" x2="${RCR}" y2="${BR_Y - 10}"
+            stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+      <text x="${RCX}" y="${BR_Y + 3}"
+            fill="#4a4d5e" font-size="10" font-family="DejaVu Sans"
+            letter-spacing="1">LEVEL BRACKETS</text>`;
+
+    levelBrackets.forEach((br, i) => {
+      const rowY     = BR_Y + 14 + i * (BR_H + BR_GAP);
+      const fill     = Math.round((br.survivorPct / 100) * BR_BAR_W);
+      const pctColor = br.survivorPct >= 55 ? '#57F287' : br.survivorPct <= 45 ? '#ED4245' : '#FEE75C';
+
+      bracketsSvg += `
+        <text x="${RCX}" y="${rowY + 15}"
+              fill="#8b8fa8" font-size="12" font-family="DejaVu Sans">${escapeXml(br.label)}</text>
+        <rect x="${BR_BAR_X}" y="${rowY + 5}" width="${BR_BAR_W}" height="8" rx="4"
+              fill="rgba(255,255,255,0.06)"/>
+        <rect x="${BR_BAR_X}" y="${rowY + 5}" width="${fill}" height="8" rx="4"
+              fill="${pctColor}" opacity="0.75"/>
+        <text x="${BR_BAR_X + BR_BAR_W + 10}" y="${rowY + 15}"
+              fill="${pctColor}" font-size="13" font-weight="bold"
+              font-family="DejaVu Sans">${br.survivorPct}%</text>
+        <text x="${RCR}" y="${rowY + 15}"
+              fill="#4a4d5e" font-size="11" font-family="DejaVu Sans"
+              text-anchor="end">${br.total}r</text>`;
+    });
+  }
+
+  // ── Footer ────────────────────────────────────────────────────────────
+  const ftY = FOOTER_Y + 26;
+  const footerLeft = lookback
+    ? `<text x="${RCX}" y="${ftY}" fill="#72767d" font-size="13" font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>`
+    : '';
+  const footerRight = `
+    <rect x="${CARD_W - 118}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
+    <text x="${CARD_W - 104}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="middle">PG</text>
+    <text x="${CARD_W - 84}" y="${ftY}" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans">PrimalGame</text>`;
+
+  // ── SVG ───────────────────────────────────────────────────────────────
+  const cardSvg = `
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${LEFT_W}" height="${FOOTER_Y}" fill="#111214"/>
+  <line x1="${LEFT_W}" y1="0" x2="${LEFT_W}" y2="${FOOTER_Y}"
+        stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <rect x="${RIGHT_X}" width="${RCW + RP * 2}" height="${FOOTER_Y}" fill="#15171a"/>
+  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#0e0f11"/>
+  <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}"
+        stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+
+  ${leftContent}
+
+  <!-- Header -->
+  <text x="${RCX}" y="30" fill="#4a4d5e" font-size="10" font-family="DejaVu Sans"
+        letter-spacing="1">${escapeXml(catLabel)} WIN RATE</text>
+  <text x="${RCX}" y="64" fill="#e8e9eb" font-size="26" font-weight="bold"
+        font-family="DejaVu Sans">${escapeXml(itemName)}</text>
+  <text x="${RCX}" y="86" fill="#72767d" font-size="13"
+        font-family="DejaVu Sans">${escapeXml(rounds.toLocaleString())} rounds · ${escapeXml(lookback)}</text>
+  <line x1="${RCX}" y1="98" x2="${RCR}" y2="98"
+        stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+
+  <!-- Big win rate numbers -->
+  <text x="${RCX}" y="148" fill="#57F287" font-size="10" font-family="DejaVu Sans"
+        letter-spacing="1">SURVIVOR WIN</text>
+  <text x="${RCX}" y="198" fill="#57F287" font-size="52" font-weight="bold"
+        font-family="DejaVu Sans">${survivorPct}%</text>
+
+  <text x="${RCR}" y="148" fill="#ED4245" font-size="10" font-family="DejaVu Sans"
+        letter-spacing="1" text-anchor="end">DINO WIN</text>
+  <text x="${RCR}" y="198" fill="#ED4245" font-size="52" font-weight="bold"
+        font-family="DejaVu Sans" text-anchor="end">${dinoPct}%</text>
+
+  <!-- Split bar -->
+  <rect x="${RCX}" y="${BAR_Y}" width="${RCW}" height="${BAR_H}" rx="6"
+        fill="rgba(255,255,255,0.06)"/>
+  ${sBarW > 0 ? `<rect x="${RCX}" y="${BAR_Y}" width="${sBarW}" height="${BAR_H}" rx="6" fill="#57F287" opacity="0.8"/>` : ''}
+  ${dBarW > 0 ? `<rect x="${RCX + sBarW}" y="${BAR_Y}" width="${dBarW}" height="${BAR_H}" rx="6" fill="#ED4245" opacity="0.8"/>` : ''}
+
+  <!-- Info row -->
+  <line x1="${RCX}" y1="${INFO_LABEL_Y - 12}" x2="${RCR}" y2="${INFO_LABEL_Y - 12}"
+        stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+
+  <text x="${RCX}" y="${INFO_LABEL_Y}" fill="#4a4d5e" font-size="10"
+        font-family="DejaVu Sans" letter-spacing="1">BEST MAP</text>
+  <text x="${RCX}" y="${INFO_VAL_Y}" fill="#e8e9eb" font-size="18" font-weight="bold"
+        font-family="DejaVu Sans">${escapeXml(bestMapStr)}</text>
+  <text x="${RCX}" y="${INFO_SUB_Y}" fill="#72767d" font-size="11"
+        font-family="DejaVu Sans">${escapeXml(bestMapSub)}</text>
+
+  <line x1="${RCX + COL_W - 14}" y1="${INFO_LABEL_Y - 6}" x2="${RCX + COL_W - 14}" y2="${INFO_SUB_Y}"
+        stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+
+  <text x="${RCX + COL_W}" y="${INFO_LABEL_Y}" fill="#4a4d5e" font-size="10"
+        font-family="DejaVu Sans" letter-spacing="1">${escapeXml(coLabel)}</text>
+  <text x="${RCX + COL_W}" y="${INFO_VAL_Y}" fill="#e8e9eb" font-size="18" font-weight="bold"
+        font-family="DejaVu Sans">${escapeXml(coItemStr)}</text>
+  <text x="${RCX + COL_W}" y="${INFO_SUB_Y}" fill="#72767d" font-size="11"
+        font-family="DejaVu Sans">${escapeXml(coItemSub)}</text>
+
+  <line x1="${RCX + COL_W * 2 - 14}" y1="${INFO_LABEL_Y - 6}" x2="${RCX + COL_W * 2 - 14}" y2="${INFO_SUB_Y}"
+        stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+
+  <text x="${RCX + COL_W * 2}" y="${INFO_LABEL_Y}" fill="#4a4d5e" font-size="10"
+        font-family="DejaVu Sans" letter-spacing="1">ALL-TIME BASELINE</text>
+  <text x="${RCX + COL_W * 2}" y="${INFO_VAL_Y}" fill="#e8e9eb" font-size="18" font-weight="bold"
+        font-family="DejaVu Sans">${escapeXml(baseStr)}</text>
+  <text x="${RCX + COL_W * 2}" y="${INFO_SUB_Y}" fill="#72767d" font-size="11"
+        font-family="DejaVu Sans">${escapeXml(baseSub)}</text>
+
+  ${bracketsSvg}
+  ${footerLeft}
+  ${footerRight}
+</svg>`;
+
+  const composites = [];
+  if (imgComposite) composites.push(imgComposite);
+
+  const flat = composites.length > 0
+    ? await sharp(Buffer.from(cardSvg)).composite(composites).png().toBuffer()
+    : await sharp(Buffer.from(cardSvg)).png().toBuffer();
+
+  const maskBuffer = await sharp(Buffer.from(`
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${CARD_H}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
+</svg>`)).png().toBuffer();
+
+  return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
+}
+
+module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, buildWinRateCard, bucketRoundsByMap, PALETTE, MAP_COLORS };
