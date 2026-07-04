@@ -295,7 +295,7 @@ async function renderWinRateOverTime(interaction, supabase, category, item, mont
   const cutoff = new Date();
   cutoff.setMonth(cutoff.getMonth() - months);
 
-  let query = supabase.from('round_logs').select('round_result, played_at').gte('played_at', cutoff.toISOString());
+  let query = supabase.from('round_logs').select('round_result, played_at').gte('played_at', cutoff.toISOString()).limit(100000);
   query = category === 'vehicle' ? query.eq('mvp_equipped_vehicle', item) : query.eq('mvp_equipped_weapon', item);
 
   const { data: rows, error } = await query;
