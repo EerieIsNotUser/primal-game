@@ -1628,4 +1628,260 @@ async function buildWinRateCard({
   return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
 }
 
-module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, buildWinRateCard, bucketRoundsByMap, PALETTE, MAP_COLORS };
+/**
+ * Dedicated balance report card — 1200px wide.
+ * Section 1: Win rate hero (large dino/survivor split + bar + delta)
+ * Section 2: Two-column KPI (top MVP weapon + vehicle)
+ * Section 3: Map rankings (all 4 maps, proportional bars + round count + survivor %)
+ * Section 4: Item adoption mini bars (all 5 items)
+ */
+async function buildBalanceReportCard({
+  title       = 'Weekly Balance Report',
+  subtitle    = '',
+  lookback    = '',
+  totalRounds = 0,
+  dinoWins    = 0,
+  survivorWins= 0,
+  winDelta    = null,   // number or null — signed pts change vs last week
+  topWeapon   = null,   // { name, count }
+  topVehicle  = null,   // { name, count }
+  maps        = [],     // [{ name, rounds, survivorWins }] sorted by rounds desc
+  adoption    = [],     // [{ label, pct }] sorted by pct desc
+} = {}) {
+  const CARD_W   = 1200;
+  const HEADER_H = 90;
+  const FOOTER_H = 40;
+  const CORNER_R = 14;
+  const ICON_SZ  = 48;
+  const ICON_X   = 14;
+  const ICON_Y   = 21;
+  const PAD      = 28;
+
+  // ── Section heights ──────────────────────────────────────────────────
+  const SEC1_H = 160; // win rate hero
+  const SEC2_H = 90;  // KPI row
+  const SEC3_H = 30 + maps.length * 38 + 16; // map rankings
+  const SEC4_H = 24 + adoption.length * 30 + 16; // item adoption
+  const BODY_H  = 16 + SEC1_H + 1 + SEC2_H + 1 + SEC3_H + 1 + SEC4_H + 16;
+  const CARD_H  = HEADER_H + BODY_H + FOOTER_H;
+  const FOOTER_Y= HEADER_H + BODY_H;
+
+  const SEC1_Y  = HEADER_H + 16;
+  const SEC2_Y  = SEC1_Y + SEC1_H + 1;
+  const SEC3_Y  = SEC2_Y + SEC2_H + 1;
+  const SEC4_Y  = SEC3_Y + SEC3_H + 1;
+
+  const total       = totalRounds || 1;
+  const dinoPct     = Math.round((dinoWins / total) * 100);
+  const survivorPct = 100 - dinoPct;
+  const sBarW       = Math.round((survivorPct / 100) * (CARD_W - PAD * 2));
+  const dBarW       = (CARD_W - PAD * 2) - sBarW;
+
+  // ── Icon ──────────────────────────────────────────────────────────────
+  let iconBuffer = null;
+  try {
+    const raw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
+      .resize(ICON_SZ, ICON_SZ, { fit: 'cover' }).png().toBuffer();
+    const mask = await sharp(Buffer.from(
+      `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">` +
+      `<rect width="${ICON_SZ}" height="${ICON_SZ}" rx="10" fill="white"/></svg>`
+    )).png().toBuffer();
+    iconBuffer = await sharp(raw).composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
+  } catch (_) {}
+
+  const composites = [];
+  if (iconBuffer) composites.push({ input: iconBuffer, top: ICON_Y, left: ICON_X });
+
+  // ── Header ────────────────────────────────────────────────────────────
+  const textX      = iconBuffer ? ICON_X + ICON_SZ + 14 : 20;
+  const titleEl    = `<text x="${textX}" y="42" fill="#e8e9eb" font-size="20" font-weight="bold" font-family="DejaVu Sans">${escapeXml(title)}</text>`;
+  const subtitleEl = subtitle ? `<text x="${textX}" y="63" fill="#b5b9bf" font-size="14" font-family="DejaVu Sans">${escapeXml(subtitle)}</text>` : '';
+
+  // Header stat boxes — rounds + lookback
+  const BOX_W = 180, BOX_H = 62, BOX_GAP = 10, BOX_Y = Math.round((HEADER_H - BOX_H) / 2);
+  const bx1 = CARD_W - 14 - BOX_W * 2 - BOX_GAP;
+  const bx2 = CARD_W - 14 - BOX_W;
+  const headerBoxes = `
+    <rect x="${bx1}" y="${BOX_Y}" width="${BOX_W}" height="${BOX_H}" rx="6" fill="#111214"/>
+    <circle cx="${bx1 + 16}" cy="${BOX_Y + 20}" r="4.5" fill="#5865F2"/>
+    <text x="${bx1 + 28}" y="${BOX_Y + 24}" fill="#b5b9bf" font-size="13" font-family="DejaVu Sans">Total Rounds</text>
+    <text x="${bx1 + 14}" y="${BOX_Y + 55}" fill="#5865F2" font-size="28" font-weight="bold" font-family="DejaVu Sans">${escapeXml(totalRounds.toLocaleString())}</text>
+    <rect x="${bx2}" y="${BOX_Y}" width="${BOX_W}" height="${BOX_H}" rx="6" fill="#111214"/>
+    <circle cx="${bx2 + 16}" cy="${BOX_Y + 20}" r="4.5" fill="#72767d"/>
+    <text x="${bx2 + 28}" y="${BOX_Y + 24}" fill="#b5b9bf" font-size="13" font-family="DejaVu Sans">Lookback</text>
+    <text x="${bx2 + 14}" y="${BOX_Y + 55}" fill="#b5b9bf" font-size="16" font-family="DejaVu Sans">${escapeXml(lookback)}</text>`;
+
+  // ── Section 1 — Win rate hero ─────────────────────────────────────────
+  const LABEL_Y  = SEC1_Y + 20;
+  const NUM_Y    = SEC1_Y + 82;
+  const BAR_Y    = SEC1_Y + 98;
+  const DELTA_Y  = SEC1_Y + 128;
+  const HALF_X   = Math.floor(CARD_W / 2);
+
+  const deltaColor = winDelta === null ? '#72767d'
+    : Math.abs(winDelta) < 3 ? '#72767d'
+    : winDelta > 0 ? '#ED4245'  // dino going up = bad for survivors
+    : '#57F287';
+  const deltaStr = winDelta === null ? 'No prior week data'
+    : winDelta === 0 ? 'Steady vs last week'
+    : `${winDelta > 0 ? '+' : ''}${winDelta} pts vs last week`;
+
+  const sec1 = `
+    <text x="${PAD}" y="${LABEL_Y}" fill="#ED4245" font-size="11" font-weight="bold"
+          font-family="DejaVu Sans" letter-spacing="1">DINO WIN</text>
+    <text x="${PAD}" y="${NUM_Y}" fill="#ED4245" font-size="64" font-weight="bold"
+          font-family="DejaVu Sans">${dinoPct}%</text>
+
+    <text x="${CARD_W - PAD}" y="${LABEL_Y}" fill="#57F287" font-size="11" font-weight="bold"
+          font-family="DejaVu Sans" letter-spacing="1" text-anchor="end">SURVIVOR WIN</text>
+    <text x="${CARD_W - PAD}" y="${NUM_Y}" fill="#57F287" font-size="64" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="end">${survivorPct}%</text>
+
+    <rect x="${PAD}" y="${BAR_Y}" width="${CARD_W - PAD * 2}" height="14" rx="6"
+          fill="rgba(255,255,255,0.06)"/>
+    ${dBarW > 0 ? `<rect x="${PAD}" y="${BAR_Y}" width="${dBarW}" height="14" rx="6" fill="#ED4245" opacity="0.8"/>` : ''}
+    ${sBarW > 0 ? `<rect x="${PAD + dBarW}" y="${BAR_Y}" width="${sBarW}" height="14" rx="6" fill="#57F287" opacity="0.8"/>` : ''}
+
+    <text x="${HALF_X}" y="${DELTA_Y}" fill="${deltaColor}" font-size="13"
+          font-family="DejaVu Sans" text-anchor="middle">${escapeXml(deltaStr)}</text>`;
+
+  // ── Section 2 — KPI row ───────────────────────────────────────────────
+  const KPI_W  = Math.floor((CARD_W - PAD * 2 - 10) / 2);
+  const KPI1_X = PAD;
+  const KPI2_X = PAD + KPI_W + 10;
+  const KPI_MID= SEC2_Y + Math.floor(SEC2_H / 2);
+
+  const sec2 = `
+    <rect x="${KPI1_X}" y="${SEC2_Y + 8}" width="${KPI_W}" height="${SEC2_H - 16}" rx="7"
+          fill="#111214" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+    <text x="${KPI1_X + 16}" y="${SEC2_Y + 28}" fill="#4a4d5e" font-size="10"
+          font-family="DejaVu Sans" letter-spacing="1">TOP MVP WEAPON</text>
+    <text x="${KPI1_X + 16}" y="${SEC2_Y + 56}" fill="#e8e9eb" font-size="22" font-weight="bold"
+          font-family="DejaVu Sans">${escapeXml(topWeapon?.name ?? '—')}</text>
+    <text x="${KPI1_X + 16}" y="${SEC2_Y + 74}" fill="#72767d" font-size="12"
+          font-family="DejaVu Sans">${topWeapon ? `${topWeapon.count}× MVP rounds` : 'No data'}</text>
+
+    <rect x="${KPI2_X}" y="${SEC2_Y + 8}" width="${KPI_W}" height="${SEC2_H - 16}" rx="7"
+          fill="#111214" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+    <text x="${KPI2_X + 16}" y="${SEC2_Y + 28}" fill="#4a4d5e" font-size="10"
+          font-family="DejaVu Sans" letter-spacing="1">TOP MVP VEHICLE</text>
+    <text x="${KPI2_X + 16}" y="${SEC2_Y + 56}" fill="#e8e9eb" font-size="22" font-weight="bold"
+          font-family="DejaVu Sans">${escapeXml(topVehicle?.name ?? '—')}</text>
+    <text x="${KPI2_X + 16}" y="${SEC2_Y + 74}" fill="#72767d" font-size="12"
+          font-family="DejaVu Sans">${topVehicle ? `${topVehicle.count}× MVP rounds` : 'No data'}</text>`;
+
+  // ── Section 3 — Map rankings ──────────────────────────────────────────
+  const MAP_BAR_MAX = Math.floor((CARD_W - PAD * 2) * 0.45);
+  const MAP_BAR_X   = PAD + 130;
+  const MAP_PCT_X   = MAP_BAR_X + MAP_BAR_MAX + 12;
+  const MAP_SURV_X  = MAP_PCT_X + 52;
+  const maxMapRounds = maps.length > 0 ? maps[0].rounds : 1;
+
+  let sec3 = `
+    <text x="${PAD}" y="${SEC3_Y + 18}" fill="#4a4d5e" font-size="10"
+          font-family="DejaVu Sans" letter-spacing="1">MAP POPULARITY</text>
+    <text x="${MAP_BAR_X + MAP_BAR_MAX / 2}" y="${SEC3_Y + 18}" fill="#4a4d5e" font-size="10"
+          font-family="DejaVu Sans" text-anchor="middle" letter-spacing="1">ROUNDS</text>
+    <text x="${MAP_SURV_X}" y="${SEC3_Y + 18}" fill="#4a4d5e" font-size="10"
+          font-family="DejaVu Sans" letter-spacing="1">SURV WIN</text>`;
+
+  maps.forEach((map, i) => {
+    const rowY      = SEC3_Y + 28 + i * 38;
+    const mapColor  = MAP_COLORS[map.name] ?? '#5865F2';
+    const barW      = Math.round((map.rounds / maxMapRounds) * MAP_BAR_MAX);
+    const sWinPct   = map.rounds > 0 ? Math.round((map.survivorWins / map.rounds) * 100) : 0;
+    const sColor    = sWinPct >= 55 ? '#57F287' : sWinPct <= 45 ? '#ED4245' : '#FEE75C';
+    const roundPct  = Math.round((map.rounds / totalRounds) * 100);
+
+    sec3 += `
+      <rect x="${PAD}" y="${rowY}" width="120" height="30" rx="5"
+            fill="${mapColor}" opacity="0.08"/>
+      <rect x="${PAD}" y="${rowY}" width="4" height="30" rx="2" fill="${mapColor}"/>
+      <text x="${PAD + 12}" y="${rowY + 20}" fill="${mapColor}" font-size="14" font-weight="bold"
+            font-family="DejaVu Sans">${escapeXml(map.name)}</text>
+
+      <rect x="${MAP_BAR_X}" y="${rowY + 8}" width="${MAP_BAR_MAX}" height="14" rx="4"
+            fill="rgba(255,255,255,0.05)"/>
+      <rect x="${MAP_BAR_X}" y="${rowY + 8}" width="${barW}" height="14" rx="4"
+            fill="${mapColor}" opacity="0.6"/>
+      <text x="${MAP_PCT_X}" y="${rowY + 20}" fill="#8b8fa8" font-size="13"
+            font-family="DejaVu Sans">${map.rounds.toLocaleString()}</text>
+      <text x="${MAP_SURV_X}" y="${rowY + 20}" fill="${sColor}" font-size="13" font-weight="bold"
+            font-family="DejaVu Sans">${sWinPct}%</text>`;
+  });
+
+  // ── Section 4 — Item adoption ─────────────────────────────────────────
+  const AD_BAR_X   = PAD + 110;
+  const AD_BAR_MAX = Math.floor((CARD_W - PAD * 2) * 0.55);
+  const AD_PCT_X   = AD_BAR_X + AD_BAR_MAX + 12;
+  const maxAdoption= adoption.length > 0 ? adoption[0].pct : 1;
+
+  let sec4 = `
+    <text x="${PAD}" y="${SEC4_Y + 18}" fill="#4a4d5e" font-size="10"
+          font-family="DejaVu Sans" letter-spacing="1">ITEM ADOPTION</text>`;
+
+  adoption.forEach((item, i) => {
+    const rowY = SEC4_Y + 24 + i * 30;
+    const barW = Math.round((item.pct / Math.max(maxAdoption, 1)) * AD_BAR_MAX);
+
+    sec4 += `
+      <text x="${PAD}" y="${rowY + 16}" fill="#8b8fa8" font-size="12"
+            font-family="DejaVu Sans">${escapeXml(item.label)}</text>
+      <rect x="${AD_BAR_X}" y="${rowY + 5}" width="${AD_BAR_MAX}" height="10" rx="3"
+            fill="rgba(255,255,255,0.05)"/>
+      <rect x="${AD_BAR_X}" y="${rowY + 5}" width="${barW}" height="10" rx="3"
+            fill="#5865F2" opacity="0.7"/>
+      <text x="${AD_PCT_X}" y="${rowY + 16}" fill="#b5b9bf" font-size="12" font-weight="bold"
+            font-family="DejaVu Sans">${item.pct}%</text>`;
+  });
+
+  // ── Footer ────────────────────────────────────────────────────────────
+  const ftY = FOOTER_Y + 26;
+  const footerLeft = lookback
+    ? `<text x="20" y="${ftY}" fill="#72767d" font-size="13" font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>`
+    : '';
+  const footerRight = `
+    <rect x="${CARD_W - 118}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
+    <text x="${CARD_W - 104}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="middle">PG</text>
+    <text x="${CARD_W - 84}" y="${ftY}" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans">PrimalGame</text>`;
+
+  // ── Section dividers ──────────────────────────────────────────────────
+  const dividers = [SEC2_Y, SEC3_Y, SEC4_Y].map(y =>
+    `<line x1="${PAD}" y1="${y}" x2="${CARD_W - PAD}" y2="${y}" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`
+  ).join('');
+
+  // ── Card SVG ──────────────────────────────────────────────────────────
+  const cardSvg = `
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${HEADER_H}" fill="#1e2024"/>
+  <rect y="${HEADER_H}" width="${CARD_W}" height="${BODY_H}" fill="#15171a"/>
+  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#0e0f11"/>
+  <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  ${headerBoxes}
+  ${titleEl}
+  ${subtitleEl}
+  ${dividers}
+  ${sec1}
+  ${sec2}
+  ${sec3}
+  ${sec4}
+  ${footerLeft}
+  ${footerRight}
+</svg>`;
+
+  const flat = composites.length > 0
+    ? await sharp(Buffer.from(cardSvg)).composite(composites).png().toBuffer()
+    : await sharp(Buffer.from(cardSvg)).png().toBuffer();
+
+  const maskBuffer = await sharp(Buffer.from(`
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${CARD_H}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
+</svg>`)).png().toBuffer();
+
+  return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
+}
+
+module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, buildWinRateCard, buildBalanceReportCard, bucketRoundsByMap, PALETTE, MAP_COLORS };

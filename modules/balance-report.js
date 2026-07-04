@@ -3,7 +3,7 @@
 // Compares this week to last week. Game modes: Normal, Double Trouble.
 
 const { AttachmentBuilder } = require('discord.js');
-const { buildStatCard } = require('./chart');
+const { buildBalanceReportCard } = require('./chart');
 
 const REPORT_CHANNEL_ID = '1515750926688845945';
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -120,34 +120,31 @@ async function buildReport(supabase) {
   const endStr   = new Date(now).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const lookback = `${startStr} – ${endStr}`;
 
-  const winColor = thisSplit.dinoPct >= 55 ? '#ED4245'
-    : thisSplit.survivorPct >= 55 ? '#57F287'
-    : '#FEE75C';
+  // Build map rankings sorted by round count
+  const mapCounts = new Map();
+  for (const row of thisWeek) {
+    if (!row.map) continue;
+    if (!mapCounts.has(row.map)) mapCounts.set(row.map, { rounds: 0, survivorWins: 0 });
+    const m = mapCounts.get(row.map);
+    m.rounds++;
+    if (row.round_result === 'SurvivorWin') m.survivorWins++;
+  }
+  const mapRankings = [...mapCounts.entries()]
+    .sort((a, b) => b[1].rounds - a[1].rounds)
+    .map(([name, stats]) => ({ name, ...stats }));
 
-  const cardBuffer = await buildStatCard({
-    title:    'Weekly Balance Report',
-    subtitle: `Primal Pursuit · ${lookback}`,
-    stats: [
-      { label: 'Total Rounds',  value: thisWeek.length.toLocaleString(),        color: '#5865F2' },
-      { label: 'Dino Win',      value: `${thisSplit.dinoPct ?? '—'}%`,           color: '#ED4245' },
-      { label: 'Survivor Win',  value: `${thisSplit.survivorPct ?? '—'}%`,       color: '#57F287' },
-    ],
+  const cardBuffer = await buildBalanceReportCard({
+    title:        'Weekly Balance Report',
+    subtitle:     `Primal Pursuit · ${lookback}`,
     lookback,
-    panels: [
-      { title: 'Win Rate Δ',      lines: [winDeltaStr]                                              },
-      { title: 'Round Volume',    lines: [volStr]                                                    },
-      { title: 'Best Map',        lines: [bestMap ? `${bestMap[0]} (${bestMap[1].total}r)` : '—']   },
-      { title: 'Top MVP Weapon',  lines: [topWeapons[0]  ? `${topWeapons[0][0]} (${topWeapons[0][1]}x)`   : '—'] },
-      { title: 'Top MVP Vehicle', lines: [topVehicles[0] ? `${topVehicles[0][0]} (${topVehicles[0][1]}x)` : '—'] },
-      { title: 'Item Adoption',
-        lines: adoption
-          ? adoption.slice(0, 3).map(a => `${a.label}: ${a.pct}%`)
-          : ['—']
-      },
-    ],
-    note: winDelta !== null && Math.abs(winDelta) >= 5
-      ? `Dino win rate shifted ${winDelta > 0 ? 'up' : 'down'} ${Math.abs(winDelta)} pts week over week — worth reviewing.`
-      : '',
+    totalRounds:  thisWeek.length,
+    dinoWins:     thisWeek.filter(r => r.round_result === 'DinoWin').length,
+    survivorWins: thisWeek.filter(r => r.round_result === 'SurvivorWin').length,
+    winDelta,
+    topWeapon:    topWeapons[0]  ? { name: topWeapons[0][0],  count: topWeapons[0][1]  } : null,
+    topVehicle:   topVehicles[0] ? { name: topVehicles[0][0], count: topVehicles[0][1] } : null,
+    maps:         mapRankings,
+    adoption:     adoption ?? [],
   });
 
   return { cardBuffer, lookback };
