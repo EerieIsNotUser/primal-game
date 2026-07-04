@@ -228,7 +228,7 @@ function bucketRoundsByMap(rows, startDate, endDate, bucketMs = 24 * 60 * 60 * 1
  * @param title      chart title
  * @returns Promise<Buffer> PNG image buffer
  */
-async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, title, capBarHeight = false) {
+async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, title) {
   const topPadding = 90;
   const padding = { top: topPadding, right: 60, bottom: 50, left: 60 };
   const plotW = WIDTH - padding.left - padding.right;
@@ -250,15 +250,12 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   // height at 60% of plotH so bars don't overwhelm the line series.
   // Otherwise use the full left axis scale (map popularity view).
   const barWidth = (plotW / labels.length) * 0.6;
-  const barMax = Math.max(1, ...barData);
   let barsSvg = '';
   barData.forEach((v, i) => {
-    const h = capBarHeight
-      ? Math.round((v / barMax) * plotH * 0.6)
-      : Math.round((padding.top + plotH) - yForLeft(v));
     const x = xFor(i) - barWidth / 2;
-    const y = padding.top + plotH - h;
-    barsSvg += `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${h}" fill="rgba(255,255,255,0.18)" rx="2"/>`;
+    const y = yForLeft(v);
+    const h = (padding.top + plotH) - y;
+    barsSvg += `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${h.toFixed(2)}" fill="rgba(255,255,255,0.12)" rx="2"/>`;
   });
 
   // Foreground line(s) — right axis, each with its own gradient fill.
