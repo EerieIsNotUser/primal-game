@@ -228,7 +228,7 @@ function bucketRoundsByMap(rows, startDate, endDate, bucketMs = 24 * 60 * 60 * 1
  * @param title      chart title
  * @returns Promise<Buffer> PNG image buffer
  */
-async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, title) {
+async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, title, capBarHeight = false) {
   const topPadding = 90;
   const padding = { top: topPadding, right: 60, bottom: 50, left: 60 };
   const plotW = WIDTH - padding.left - padding.right;
@@ -251,10 +251,9 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   // Otherwise use the full left axis scale (map popularity view).
   const barWidth = (plotW / labels.length) * 0.6;
   const barMax = Math.max(1, ...barData);
-  const useCapHeight = (barMax / lineMax) > 20;
   let barsSvg = '';
   barData.forEach((v, i) => {
-    const h = useCapHeight
+    const h = capBarHeight
       ? Math.round((v / barMax) * plotH * 0.6)
       : Math.round((padding.top + plotH) - yForLeft(v));
     const x = xFor(i) - barWidth / 2;

@@ -334,7 +334,8 @@ async function renderWinRateOverTime(interaction, supabase, category, item, days
     totalByDay,
     'Total Rounds (All)',
     [{ label: `${item} Surv. Win %`, data: winRateData, color: lineColor }],
-    null
+    null,
+    true
   );
 
   const buffer = await buildChartCard(chartBuffer, {
