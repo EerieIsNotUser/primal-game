@@ -277,26 +277,11 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
         <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
       </linearGradient>`;
 
-    // Split into segments at zero-value points so empty days render as
-    // gaps rather than dips to 0 (zero means no data for this item, not 0%)
-    const segments = [];
-    let current = [];
-    s.data.forEach((v, i) => {
-      if (v === 0) {
-        if (current.length > 0) { segments.push(current); current = []; }
-      } else {
-        current.push({ x: xFor(i), y: yForRight(v) });
-      }
-    });
-    if (current.length > 0) segments.push(current);
-
-    segments.forEach(pts => {
-      if (pts.length === 0) return;
-      const linePath = smoothPath(pts, padding.top + plotH, padding.top);
-      const fillPath = `${linePath} L ${pts[pts.length - 1].x.toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${pts[0].x.toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
-      fillsSvg += `<path d="${fillPath}" fill="url(#${gradId})"/>`;
-      linesSvg += `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>`;
-    });
+    const points = s.data.map((v, i) => ({ x: xFor(i), y: yForRight(v) }));
+    const linePath = smoothPath(points, padding.top + plotH, padding.top);
+    const fillPath = `${linePath} L ${xFor(s.data.length - 1).toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${xFor(0).toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
+    fillsSvg += `<path d="${fillPath}" fill="url(#${gradId})"/>`;
+    linesSvg += `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>`;
   });
 
   // Gridlines referenced to the right (line) axis, Statbot-style
