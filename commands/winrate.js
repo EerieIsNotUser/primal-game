@@ -307,7 +307,11 @@ module.exports = {
     const categoryLabel = category === 'vehicle' ? 'Car' : 'Gun';
 
     // ── Statistical significance check vs all-time baseline ──────────────
-    const baseline = await queryAllTimeBaseline(supabase, { category, item, gameMode, excludeRange: dateRange });
+    const excludeRange = dateRange ?? (days !== 'all' ? {
+      startDate: new Date(Date.now() - parseInt(days, 10) * 24 * 60 * 60 * 1000),
+      endDate:   new Date(),
+    } : null);
+    const baseline = await queryAllTimeBaseline(supabase, { category, item, gameMode, excludeRange });
     let significanceNote = '';
 
     if (baseline && baseline.total >= 5) {
@@ -359,7 +363,8 @@ module.exports = {
       { label: '1–20',   min: 1,   max: 20       },
       { label: '21–40',  min: 21,  max: 40       },
       { label: '41–100', min: 41,  max: 100      },
-      { label: '100+',   min: 101, max: Infinity },
+      { label: '100–250', min: 101, max: 250     },
+      { label: '250+',   min: 251, max: Infinity },
     ];
     const levelBrackets = BRACKETS.map(br => {
       const brRows  = rows.filter(r => r.average_level != null && r.average_level >= br.min && r.average_level <= br.max);

@@ -1323,7 +1323,7 @@ async function buildWinRateCard({
   // ── Left panel ─────────────────────────────────────────────────────────
   const PH_W = 200, PH_H = 200;
   const PH_X = Math.floor((LEFT_W - PH_W) / 2);
-  const PH_Y = 133;
+  const PH_Y = 140; // centered between header line (115) and category pill (358)
 
   let leftContent = '';
   let imgComposite = null;
@@ -1349,18 +1349,17 @@ async function buildWinRateCard({
             text-anchor="middle">Coming Soon</text>`;
   }
 
-  // item name + category tag on left panel
-  const nameShort = itemName.length > 16 ? itemName.slice(0, 15) + '…' : itemName;
+  // category tag + round count on left panel (name removed — shown in right header)
   leftContent += `
-    <text x="${Math.floor(LEFT_W / 2)}" y="101"
-          fill="#e8e9eb" font-size="20" font-weight="bold" font-family="DejaVu Sans"
-          text-anchor="middle">${escapeXml(nameShort)}</text>
     <line x1="20" y1="115" x2="${LEFT_W - 20}" y2="115" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
-    <rect x="${Math.floor((LEFT_W - 110) / 2)}" y="349" width="110" height="24" rx="5"
+    <rect x="${Math.floor((LEFT_W - 110) / 2)}" y="358" width="110" height="24" rx="5"
           fill="${catColor}" opacity="0.12"/>
-    <text x="${Math.floor(LEFT_W / 2)}" y="366"
+    <text x="${Math.floor(LEFT_W / 2)}" y="375"
           fill="${catColor}" font-size="11" font-weight="bold" font-family="DejaVu Sans"
-          letter-spacing="1" text-anchor="middle">${escapeXml(catLabel)}</text>`;
+          letter-spacing="1" text-anchor="middle">${escapeXml(catLabel)}</text>
+    <text x="${Math.floor(LEFT_W / 2)}" y="398"
+          fill="#4a4d5e" font-size="11" font-family="DejaVu Sans"
+          text-anchor="middle">${escapeXml(rounds.toLocaleString())} rounds</text>`;
 
   // ── Split bar ─────────────────────────────────────────────────────────
   const BAR_Y  = 208;
@@ -1375,7 +1374,8 @@ async function buildWinRateCard({
   const COL_W        = Math.floor(RCW / 3);
 
   const bestMapStr = bestMap ? bestMap.name : '—';
-  const bestMapSub = bestMap ? `${bestMap.survivorWinPct}% surv · ${bestMap.rounds}r` : '';
+  const bestMapLow = bestMap && bestMap.rounds < 20 ? ' ⚠' : '';
+  const bestMapSub = bestMap ? `${bestMap.survivorWinPct}% surv · ${bestMap.rounds}r${bestMapLow}` : '';
   const coItemStr  = coItem  ? (coItem.name.length > 13 ? coItem.name.slice(0, 12) + '…' : coItem.name) : '—';
   const coItemSub  = coItem  ? `${coItem.count}x MVP rounds` : '';
   const baseStr    = baseline ? `${Math.round(baseline.rate * 100)}%` : '—';
@@ -1389,6 +1389,12 @@ async function buildWinRateCard({
   const BR_LABEL_W = 52;
   const BR_BAR_X   = RCX + BR_LABEL_W;
 
+  const BR_LABEL_COL = 58; // fixed label column width for alignment
+  const BR_BAR_X2    = RCX + BR_LABEL_COL;
+  const BR_BAR_W2    = Math.floor(RCW * 0.42);
+  const BR_ROW_H     = 18;
+  const BR_ROW_GAP   = 3;
+
   let bracketsSvg = '';
   if (levelBrackets.length > 0) {
     bracketsSvg += `
@@ -1399,23 +1405,24 @@ async function buildWinRateCard({
             letter-spacing="1">LEVEL BRACKETS</text>`;
 
     levelBrackets.forEach((br, i) => {
-      const rowY     = BR_Y + 14 + i * (BR_H + BR_GAP);
-      const fill     = Math.round((br.survivorPct / 100) * BR_BAR_W);
+      const rowY     = BR_Y + 14 + i * (BR_ROW_H + BR_ROW_GAP);
+      const fill     = Math.round((br.survivorPct / 100) * BR_BAR_W2);
       const pctColor = br.survivorPct >= 55 ? '#57F287' : br.survivorPct <= 45 ? '#ED4245' : '#FEE75C';
+      const lowSample = br.total < 20 ? ' ⚠' : '';
 
       bracketsSvg += `
-        <text x="${RCX}" y="${rowY + 15}"
-              fill="#8b8fa8" font-size="12" font-family="DejaVu Sans">${escapeXml(br.label)}</text>
-        <rect x="${BR_BAR_X}" y="${rowY + 5}" width="${BR_BAR_W}" height="8" rx="4"
+        <text x="${RCX}" y="${rowY + 13}"
+              fill="#8b8fa8" font-size="11" font-family="DejaVu Sans">${escapeXml(br.label)}</text>
+        <rect x="${BR_BAR_X2}" y="${rowY + 4}" width="${BR_BAR_W2}" height="7" rx="3"
               fill="rgba(255,255,255,0.06)"/>
-        <rect x="${BR_BAR_X}" y="${rowY + 5}" width="${fill}" height="8" rx="4"
+        <rect x="${BR_BAR_X2}" y="${rowY + 4}" width="${fill}" height="7" rx="3"
               fill="${pctColor}" opacity="0.75"/>
-        <text x="${BR_BAR_X + BR_BAR_W + 10}" y="${rowY + 15}"
-              fill="${pctColor}" font-size="13" font-weight="bold"
+        <text x="${BR_BAR_X2 + BR_BAR_W2 + 10}" y="${rowY + 13}"
+              fill="${pctColor}" font-size="12" font-weight="bold"
               font-family="DejaVu Sans">${br.survivorPct}%</text>
-        <text x="${RCR}" y="${rowY + 15}"
-              fill="#4a4d5e" font-size="11" font-family="DejaVu Sans"
-              text-anchor="end">${br.total}r</text>`;
+        <text x="${RCR}" y="${rowY + 13}"
+              fill="#4a4d5e" font-size="10" font-family="DejaVu Sans"
+              text-anchor="end">${br.total}r${lowSample}</text>`;
     });
   }
 
