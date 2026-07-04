@@ -5,7 +5,7 @@
 const { AttachmentBuilder } = require('discord.js');
 const { buildStatCard } = require('./chart');
 
-const REPORT_CHANNEL_ID = '1515751121560272987';
+const REPORT_CHANNEL_ID = '1515750926688845945';
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 const ITEM_FIELDS = [
