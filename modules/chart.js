@@ -300,7 +300,7 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
     leftAxisSvg += `<text x="${padding.left - 10}" y="${(y + 4).toFixed(2)}" fill="#999999" font-size="12" font-family="DejaVu Sans" text-anchor="end">${Math.round(v)}</text>`;
   }
   // Right axis labels — neutral color when multi-line (no single color to match)
-  const rightAxisColor = isMultiLine ? '#dcddde' : (lineSeries[0]?.color || PALETTE[0]);
+  const rightAxisColor = '#999999';
   let rightAxisSvg = '';
   for (let v = 0; v <= rightMax; v += gridStep) {
     const y = yForRight(v);
