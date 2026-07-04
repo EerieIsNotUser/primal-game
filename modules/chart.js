@@ -235,8 +235,7 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   const plotH = HEIGHT - padding.top - padding.bottom;
 
   const leftMax = Math.ceil(Math.max(1, ...barData) / 10) * 10 || 10;
-  const allLineValues = lineSeries.flatMap(s => s.data);
-  const rightMax = Math.ceil(Math.max(1, ...allLineValues) / 10) * 10 || 10;
+  const rightMax = Math.ceil(lineMax / 10) * 10 || 10;
 
   function xFor(i) {
     return padding.left + (labels.length > 1 ? (i / (labels.length - 1)) * plotW : plotW / 2);
@@ -245,13 +244,19 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   function yForRight(v) { return padding.top + plotH - (v / rightMax) * plotH; }
 
   // Background bars (total volume, left axis)
-  // Cap bar height at 60% of plotH so bars stay readable when line values
-  // are on a completely different scale (e.g. total rounds vs win rate %)
+  // If bars and lines are on very different scales (ratio > 20×), cap bar
+  // height at 60% of plotH so bars don't overwhelm the line series.
+  // Otherwise use the full left axis scale (map popularity view).
   const barWidth = (plotW / labels.length) * 0.6;
   const barMax = Math.max(1, ...barData);
+  const allLineValues = lineSeries.flatMap(s => s.data);
+  const lineMax = Math.max(1, ...allLineValues);
+  const useCapHeight = (barMax / lineMax) > 20;
   let barsSvg = '';
   barData.forEach((v, i) => {
-    const h = Math.round((v / barMax) * plotH * 0.6);
+    const h = useCapHeight
+      ? Math.round((v / barMax) * plotH * 0.6)
+      : Math.round((padding.top + plotH) - yForLeft(v));
     const x = xFor(i) - barWidth / 2;
     const y = padding.top + plotH - h;
     barsSvg += `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${h}" fill="rgba(255,255,255,0.18)" rx="2"/>`;
