@@ -1029,9 +1029,9 @@ async function buildTierListCard({
   const CARD_H   = FOOTER_Y + FOOTER_H;
 
   const MEDALS = [
-    { color: '#C9A84C', label: '1' }, // muted gold
-    { color: '#909090', label: '2' }, // muted silver
-    { color: '#8C6239', label: '3' }, // muted bronze
+    { color: '#FFD700', label: '1' },
+    { color: '#C0C0C0', label: '2' },
+    { color: '#CD7F32', label: '3' },
   ];
   const PODIUM_CFGS = [
     { x: X1, y: Y1, w: W1, h: H1, medal: MEDALS[0], bg: '#161820' },
