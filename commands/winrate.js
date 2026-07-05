@@ -101,9 +101,14 @@ function parseDateRange(text) {
   return { startDate, endDate: endDate ?? startDate };
 }
 
-async function queryWinRate(supabase, { category, item, gameMode, days, dateRange }) {
-  let query = supabase.from('round_logs').select('*')
-    .neq('place_id', '100026158235338');
+async function queryWinRate(supabase, { category, item, gameMode, lobby, days, dateRange }) {
+  let query = supabase.from('round_logs').select('*');
+
+  if (lobby) {
+    query = query.eq('place_id', lobby);
+  } else {
+    query = query.neq('place_id', '100026158235338').neq('place_id', '12631072275');
+  }
 
   if (dateRange) {
     query = query.gte('played_at', dateRange.startDate.toISOString()).lte('played_at', dateRange.endDate.toISOString());
@@ -246,6 +251,16 @@ module.exports = {
         .setDescription('Time period (default: past month) — ignored if "dates" is set')
         .addChoices(...TIME_RANGES.map(t => ({ name: t.name, value: t.value })))
         .setRequired(false)
+    )
+    .addStringOption(opt =>
+      opt.setName('lobby')
+        .setDescription('Lobby type to filter by (default: main + pro, excludes training)')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Main Game',        value: '12076775711'     },
+          { name: 'Pro Lobbies',      value: '16060525458'     },
+          { name: 'Training Lobbies', value: '100026158235338' },
+        )
     ),
 
   async autocomplete(interaction) {
@@ -270,6 +285,7 @@ module.exports = {
     const category     = interaction.options.getString('category');
     const item         = interaction.options.getString('item');
     const gameMode     = interaction.options.getString('game_mode') ?? null;
+    const lobby        = interaction.options.getString('lobby') ?? null;
     const datesInput   = interaction.options.getString('dates');
     const days         = interaction.options.getString('time_range') ?? '30';
 
@@ -288,7 +304,7 @@ module.exports = {
       }
     }
 
-    const rows = await queryWinRate(supabase, { category, item, gameMode, days, dateRange });
+    const rows = await queryWinRate(supabase, { category, item, gameMode, lobby, days, dateRange });
 
     if (rows === null) {
       return interaction.editReply('❌ Something went wrong querying round data.');
@@ -304,9 +320,13 @@ module.exports = {
       : computeWinRate(rows);
     const winRatePct = Math.round(winRate * 100);
 
-    const periodLabel = dateRange
+    const lobbyLabel = lobby === '12076775711'     ? ' · Main Game'
+      : lobby === '16060525458'                    ? ' · Pro Lobbies'
+      : lobby === '100026158235338'                ? ' · Training'
+      : '';
+    const periodLabel = (dateRange
       ? `${dateRange.startDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${dateRange.endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`
-      : TIME_RANGES.find(t => t.value === days)?.name ?? 'selected period';
+      : TIME_RANGES.find(t => t.value === days)?.name ?? 'selected period') + lobbyLabel;
 
     const gameModeLabel = gameMode ?? 'All Modes';
     const categoryLabel = category === 'vehicle' ? 'Car' : category === 'dino' ? 'Dino' : 'Gun';
