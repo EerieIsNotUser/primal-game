@@ -388,9 +388,10 @@ module.exports = {
     const cardSurvivorWins = isDino ? dinoWins     : survivorWins;
     const cardDinoWins     = isDino ? survivorWins : dinoWins;
 
+    const resolvedCategory = category === 'dino' ? 'dino' : category;
     const cardBuffer = await buildWinRateCard({
       itemName:      item,
-      category:      isDino ? 'dino' : category,
+      category:      resolvedCategory,
       lookback:      periodLabel,
       rounds:        rows.length,
       survivorWins:  cardSurvivorWins,

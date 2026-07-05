@@ -1417,11 +1417,12 @@ async function buildWinRateCard({
   const RCR      = CARD_W - RP;
   const RCW      = RCR - RCX;
 
+  const isDinoCard  = category === 'dino';
   const survivorPct = rounds > 0 ? Math.round((survivorWins / rounds) * 100) : 0;
   const dinoPct     = 100 - survivorPct;
-  const catLabel    = category === 'vehicle' ? 'VEHICLE' : 'WEAPON';
-  const catColor    = category === 'vehicle' ? '#5865F2' : '#ED4245';
-  const coLabel     = category === 'vehicle' ? 'TOP CO-GUN' : 'TOP CO-CAR';
+  const catLabel    = category === 'vehicle' ? 'VEHICLE' : isDinoCard ? 'DINOSAUR' : 'WEAPON';
+  const catColor    = category === 'vehicle' ? '#5865F2' : isDinoCard ? '#F07830' : '#ED4245';
+  const coLabel     = category === 'vehicle' ? 'TOP CO-GUN' : isDinoCard ? 'TOP CO-DINO' : 'TOP CO-CAR';
 
   // ── Left panel ─────────────────────────────────────────────────────────
   const PH_W = 200, PH_H = 200;
@@ -1459,7 +1460,7 @@ async function buildWinRateCard({
           fill="${catColor}" opacity="0.12"/>
     <text x="${Math.floor(LEFT_W / 2)}" y="375"
           fill="${catColor}" font-size="11" font-weight="bold" font-family="DejaVu Sans"
-          letter-spacing="1" text-anchor="middle">${escapeXml(catLabel)}</text>
+          letter-spacing="1" text-anchor="middle">${escapeXml(isDinoCard ? 'DINOSAUR' : catLabel)}</text>
     <text x="${Math.floor(LEFT_W / 2)}" y="398"
           fill="#4a4d5e" font-size="11" font-family="DejaVu Sans"
           text-anchor="middle">${escapeXml(rounds.toLocaleString())} rounds</text>`;
@@ -1556,7 +1557,7 @@ async function buildWinRateCard({
 
   <!-- Header -->
   <text x="${RCX}" y="30" fill="#4a4d5e" font-size="10" font-family="DejaVu Sans"
-        letter-spacing="1">${escapeXml(catLabel)} WIN RATE</text>
+        letter-spacing="1">${escapeXml(isDinoCard ? 'DINOSAUR WIN RATE' : catLabel + ' WIN RATE')}</text>
   <text x="${RCX}" y="64" fill="#e8e9eb" font-size="26" font-weight="bold"
         font-family="DejaVu Sans">${escapeXml(itemName)}</text>
   <text x="${RCX}" y="86" fill="#72767d" font-size="13"
@@ -1565,21 +1566,24 @@ async function buildWinRateCard({
         stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
 
   <!-- Big win rate numbers -->
-  <text x="${RCX}" y="148" fill="#57F287" font-size="10" font-family="DejaVu Sans"
-        letter-spacing="1">SURVIVOR WIN</text>
-  <text x="${RCX}" y="198" fill="#57F287" font-size="52" font-weight="bold"
-        font-family="DejaVu Sans">${survivorPct}%</text>
+  <text x="${RCX}" y="148" fill="${isDinoCard ? '#ED4245' : '#57F287'}" font-size="10" font-family="DejaVu Sans"
+        letter-spacing="1">${isDinoCard ? 'DINO WIN' : 'SURVIVOR WIN'}</text>
+  <text x="${RCX}" y="198" fill="${isDinoCard ? '#ED4245' : '#57F287'}" font-size="52" font-weight="bold"
+        font-family="DejaVu Sans">${isDinoCard ? dinoPct : survivorPct}%</text>
 
-  <text x="${RCR}" y="148" fill="#ED4245" font-size="10" font-family="DejaVu Sans"
-        letter-spacing="1" text-anchor="end">DINO WIN</text>
-  <text x="${RCR}" y="198" fill="#ED4245" font-size="52" font-weight="bold"
-        font-family="DejaVu Sans" text-anchor="end">${dinoPct}%</text>
+  <text x="${RCR}" y="148" fill="${isDinoCard ? '#57F287' : '#ED4245'}" font-size="10" font-family="DejaVu Sans"
+        letter-spacing="1" text-anchor="end">${isDinoCard ? 'SURVIVOR WIN' : 'DINO WIN'}</text>
+  <text x="${RCR}" y="198" fill="${isDinoCard ? '#57F287' : '#ED4245'}" font-size="52" font-weight="bold"
+        font-family="DejaVu Sans" text-anchor="end">${isDinoCard ? survivorPct : dinoPct}%</text>
 
   <!-- Split bar -->
   <rect x="${RCX}" y="${BAR_Y}" width="${RCW}" height="${BAR_H}" rx="6"
         fill="rgba(255,255,255,0.06)"/>
-  ${sBarW > 0 ? `<rect x="${RCX}" y="${BAR_Y}" width="${sBarW}" height="${BAR_H}" rx="6" fill="#57F287" opacity="0.8"/>` : ''}
-  ${dBarW > 0 ? `<rect x="${RCX + sBarW}" y="${BAR_Y}" width="${dBarW}" height="${BAR_H}" rx="6" fill="#ED4245" opacity="0.8"/>` : ''}
+  ${isDinoCard
+    ? (dBarW > 0 ? `<rect x="${RCX}" y="${BAR_Y}" width="${dBarW}" height="${BAR_H}" rx="6" fill="#ED4245" opacity="0.8"/>` : '') +
+      (sBarW > 0 ? `<rect x="${RCX + dBarW}" y="${BAR_Y}" width="${sBarW}" height="${BAR_H}" rx="6" fill="#57F287" opacity="0.8"/>` : '')
+    : (sBarW > 0 ? `<rect x="${RCX}" y="${BAR_Y}" width="${sBarW}" height="${BAR_H}" rx="6" fill="#57F287" opacity="0.8"/>` : '') +
+      (dBarW > 0 ? `<rect x="${RCX + sBarW}" y="${BAR_Y}" width="${dBarW}" height="${BAR_H}" rx="6" fill="#ED4245" opacity="0.8"/>` : '')}
 
   <!-- Info row -->
   <line x1="${RCX}" y1="${INFO_LABEL_Y - 12}" x2="${RCR}" y2="${INFO_LABEL_Y - 12}"
