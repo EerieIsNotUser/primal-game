@@ -315,13 +315,35 @@ module.exports = {
     }
 
     const isDino = category === 'dino';
-    const winRate = isDino
-      ? rows.filter(r => r.round_result === 'DinoWin').length / rows.length
-      : computeWinRate(rows);
+
+    function getLevelWeight(level) {
+      if (level == null) return 1;
+      if (level >= 251) return 2;
+      if (level >= 101) return 1.5;
+      if (level >= 41)  return 1;
+      return 0.5;
+    }
+
+    let winRate;
+    if (lobby === '16060525458') {
+      // Pro lobbies — weighted by level so higher-level rounds count more
+      let weightedWins = 0, weightedTotal = 0;
+      for (const r of rows) {
+        const w = getLevelWeight(r.average_level);
+        weightedTotal += w;
+        const isWin = isDino ? r.round_result === 'DinoWin' : r.round_result === 'SurvivorWin';
+        if (isWin) weightedWins += w;
+      }
+      winRate = weightedTotal > 0 ? weightedWins / weightedTotal : 0;
+    } else {
+      winRate = isDino
+        ? rows.filter(r => r.round_result === 'DinoWin').length / rows.length
+        : computeWinRate(rows);
+    }
     const winRatePct = Math.round(winRate * 100);
 
     const lobbyLabel = lobby === '12076775711'     ? ' · Main Game'
-      : lobby === '16060525458'                    ? ' · Pro Lobbies'
+      : lobby === '16060525458'                    ? ' · Pro Lobbies (weighted)'
       : lobby === '100026158235338'                ? ' · Training'
       : '';
     const periodLabel = (dateRange
@@ -382,7 +404,9 @@ module.exports = {
       })[0];
     const bestMap = bestMapEntry ? {
       name:           bestMapEntry[0],
-      survivorWinPct: Math.round((bestMapEntry[1].wins / bestMapEntry[1].total) * 100),
+      survivorWinPct: isDino
+        ? Math.round(((bestMapEntry[1].total - bestMapEntry[1].wins) / bestMapEntry[1].total) * 100)
+        : Math.round((bestMapEntry[1].wins / bestMapEntry[1].total) * 100),
       rounds:         bestMapEntry[1].total,
     } : null;
 
@@ -419,7 +443,11 @@ module.exports = {
       bestMap,
       coItem:        coItemEntry ? { name: coItemEntry[0], count: coItemEntry[1] } : null,
       baseline:      baseline && baseline.total >= 5 ? { rate: baseline.wins / baseline.total, rounds: baseline.total } : null,
-      levelBrackets,
+      levelBrackets: levelBrackets.map(br => ({
+        label:       br.label,
+        survivorPct: isDino ? (100 - br.survivorPct) : br.survivorPct,
+        total:       br.total,
+      })),
     });
 
     // ── Attachment ────────────────────────────────────────────────────────
