@@ -412,11 +412,11 @@ module.exports = {
 
     // ── Level brackets ────────────────────────────────────────────────────
     const BRACKETS = [
-      { label: '1–20',   min: 1,   max: 20       },
-      { label: '21–40',  min: 21,  max: 40       },
-      { label: '41–100', min: 41,  max: 100      },
-      { label: '100–250', min: 101, max: 250     },
-      { label: '250+',   min: 251, max: Infinity },
+      { label: '1–20',    min: 1,   max: 20       },
+      { label: lobby === '16060525458' ? '35–40' : '21–40', min: 21, max: 40 },
+      { label: '41–100',  min: 41,  max: 100      },
+      { label: '100–250', min: 101, max: 250      },
+      { label: '250+',    min: 251, max: Infinity },
     ];
     const levelBrackets = BRACKETS.map(br => {
       const brRows  = rows.filter(r => r.average_level != null && r.average_level >= br.min && r.average_level <= br.max);
