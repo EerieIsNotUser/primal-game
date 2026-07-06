@@ -2106,4 +2106,194 @@ async function buildGameStatsOverviewCard({
   return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
 }
 
-module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, buildWinRateCard, buildBalanceReportCard, buildGameStatsOverviewCard, bucketRoundsByMap, PALETTE, MAP_COLORS };
+// ─── buildWinRateCardV2 ───────────────────────────────────────────────────────
+// Experimental redesign — no left panel, full-width, tinted hero, card-in-card
+// info cells, ranked bracket list. Wire to /testwinrate for side-by-side compare.
+async function buildWinRateCardV2({
+  itemName      = '',
+  category      = '',
+  lookback      = '',
+  rounds        = 0,
+  survivorWins  = 0,
+  dinoWins      = 0,
+  bestMap       = null,
+  coItem        = null,
+  baseline      = null,
+  levelBrackets = [],
+} = {}) {
+  const CARD_W   = 1200;
+  const FOOTER_H = 40;
+  const CORNER_R = 14;
+  const PAD      = 36;
+
+  const isDinoCard  = category === 'dino';
+  const survivorPct = rounds > 0 ? Math.round((survivorWins / rounds) * 100) : 0;
+  const dinoPct     = 100 - survivorPct;
+  const leftPct     = isDinoCard ? dinoPct    : survivorPct;
+  const rightPct    = isDinoCard ? survivorPct : dinoPct;
+  const leftLabel   = isDinoCard ? 'DINO WIN'      : 'SURVIVOR WIN';
+  const rightLabel  = isDinoCard ? 'SURVIVOR WIN'  : 'DINO WIN';
+  const leftColor   = isDinoCard ? '#ED4245'       : '#57F287';
+  const rightColor  = isDinoCard ? '#57F287'       : '#ED4245';
+  const catLabel    = category === 'vehicle' ? 'VEHICLE' : isDinoCard ? 'DINOSAUR' : 'WEAPON';
+  const catColor    = category === 'vehicle' ? '#5865F2' : isDinoCard ? '#F07830'  : '#ED4245';
+  const coLabel     = category === 'vehicle' ? 'TOP CO-GUN' : isDinoCard ? 'TOP CO-DINO' : 'TOP CO-CAR';
+
+  const dominantPct   = Math.max(leftPct, rightPct);
+  const dominantColor = leftPct > rightPct ? leftColor : rightColor;
+  const tintOpacity   = dominantPct >= 58 ? 0.06 : dominantPct >= 52 ? 0.035 : 0.015;
+
+  const HEADER_H  = 100;
+  const HERO_H    = 140;
+  const INFO_H    = 100;
+  const BRACKET_H = levelBrackets.length > 0 ? 28 + levelBrackets.length * 28 : 0;
+  const BODY_H    = HEADER_H + HERO_H + INFO_H + BRACKET_H + (BRACKET_H > 0 ? 16 : 0);
+  const CARD_H    = BODY_H + FOOTER_H + 24;
+
+  const HERO_Y    = HEADER_H;
+  const INFO_Y    = HEADER_H + HERO_H;
+  const BRACKET_Y = INFO_Y + INFO_H + 16;
+  const FOOTER_Y  = CARD_H - FOOTER_H;
+
+  const ACCENT_W = 4;
+  const header = `
+    <rect x="0" y="0" width="${ACCENT_W}" height="${HEADER_H}" fill="${catColor}"/>
+    <text x="${PAD}" y="30" fill="${catColor}" font-size="10" font-weight="bold"
+          font-family="DejaVu Sans" letter-spacing="2">${escapeXml(catLabel + ' WIN RATE')}</text>
+    <text x="${PAD}" y="68" fill="#e8e9eb" font-size="36" font-weight="bold"
+          font-family="DejaVu Sans">${escapeXml(itemName)}</text>
+    <text x="${PAD}" y="90" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans">${escapeXml(rounds.toLocaleString())} rounds · ${escapeXml(lookback)}</text>
+    <line x1="${PAD}" y1="${HEADER_H}" x2="${CARD_W - PAD}" y2="${HEADER_H}"
+          stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
+
+  const BAR_Y    = HERO_Y + 80;
+  const BAR_H    = 20;
+  const BAR_X    = PAD;
+  const BAR_W    = CARD_W - PAD * 2;
+  const sBarW    = Math.round((survivorPct / 100) * BAR_W);
+  const dBarW    = BAR_W - sBarW;
+  const leftBarW  = isDinoCard ? dBarW : sBarW;
+  const rightBarW = isDinoCard ? sBarW : dBarW;
+
+  const hero = `
+    <rect x="0" y="${HERO_Y}" width="${CARD_W}" height="${HERO_H}"
+          fill="${dominantColor}" opacity="${tintOpacity}"/>
+    <text x="${PAD}" y="${HERO_Y + 20}" fill="${leftColor}" font-size="10" font-weight="bold"
+          font-family="DejaVu Sans" letter-spacing="2">${escapeXml(leftLabel)}</text>
+    <text x="${PAD}" y="${HERO_Y + 72}" fill="${leftColor}" font-size="64" font-weight="bold"
+          font-family="DejaVu Sans">${leftPct}%</text>
+    <text x="${CARD_W - PAD}" y="${HERO_Y + 20}" fill="${rightColor}" font-size="10" font-weight="bold"
+          font-family="DejaVu Sans" letter-spacing="2" text-anchor="end">${escapeXml(rightLabel)}</text>
+    <text x="${CARD_W - PAD}" y="${HERO_Y + 72}" fill="${rightColor}" font-size="64" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="end">${rightPct}%</text>
+    <rect x="${BAR_X}" y="${BAR_Y}" width="${BAR_W}" height="${BAR_H}" rx="8"
+          fill="rgba(255,255,255,0.05)"/>
+    ${leftBarW  > 0 ? `<rect x="${BAR_X}" y="${BAR_Y}" width="${leftBarW}" height="${BAR_H}" rx="8" fill="${leftColor}" opacity="0.85"/>` : ''}
+    ${rightBarW > 0 ? `<rect x="${BAR_X + leftBarW}" y="${BAR_Y}" width="${rightBarW}" height="${BAR_H}" rx="8" fill="${rightColor}" opacity="0.85"/>` : ''}
+    <line x1="${PAD}" y1="${INFO_Y}" x2="${CARD_W - PAD}" y2="${INFO_Y}"
+          stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
+
+  const CELL_COUNT = 4;
+  const CELL_GAP   = 12;
+  const CELL_W     = Math.floor((CARD_W - PAD * 2 - CELL_GAP * (CELL_COUNT - 1)) / CELL_COUNT);
+  const CELL_H     = INFO_H - 16;
+  const CELL_Y     = INFO_Y + 8;
+
+  const coItemStr  = coItem  ? (coItem.name.length > 14 ? coItem.name.slice(0, 13) + '…' : coItem.name) : '—';
+  const coItemSub  = coItem  ? `${coItem.count}× MVP rounds` : '';
+  const bestMapStr = bestMap ? bestMap.name : '—';
+  const bestMapSub = bestMap ? `${bestMap.survivorWinPct}% ${isDinoCard ? 'dino' : 'surv'} · ${bestMap.rounds}r${bestMap.rounds < 20 ? ' ⚠' : ''}` : '';
+  const baseStr    = baseline ? `${Math.round(baseline.rate * 100)}%` : '—';
+  const baseSub    = baseline ? `${baseline.rounds.toLocaleString()}r all-time` : 'not enough data';
+
+  const infoItems = [
+    { label: 'BEST MAP',          value: bestMapStr, sub: bestMapSub },
+    { label: coLabel,             value: coItemStr,  sub: coItemSub  },
+    { label: 'ALL-TIME BASELINE', value: baseStr,    sub: baseSub    },
+    { label: 'SAMPLE SIZE',       value: rounds >= 1000 ? `${(rounds / 1000).toFixed(1)}k` : rounds.toString(), sub: `${rounds.toLocaleString()} rounds` },
+  ];
+
+  let infoCells = '';
+  infoItems.forEach((item, i) => {
+    const cx = PAD + i * (CELL_W + CELL_GAP);
+    infoCells += `
+      <rect x="${cx}" y="${CELL_Y}" width="${CELL_W}" height="${CELL_H}" rx="8"
+            fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+      <text x="${cx + 14}" y="${CELL_Y + 20}" fill="#4a4d5e" font-size="9" font-weight="bold"
+            font-family="DejaVu Sans" letter-spacing="1.5">${escapeXml(item.label)}</text>
+      <text x="${cx + 14}" y="${CELL_Y + 54}" fill="#e8e9eb" font-size="20" font-weight="bold"
+            font-family="DejaVu Sans">${escapeXml(item.value)}</text>
+      <text x="${cx + 14}" y="${CELL_Y + 74}" fill="#72767d" font-size="11"
+            font-family="DejaVu Sans">${escapeXml(item.sub)}</text>`;
+  });
+
+  let bracketsSvg = '';
+  if (levelBrackets.length > 0) {
+    const BR_BAR_X = PAD + 80;
+    const BR_BAR_W = Math.floor((CARD_W - PAD * 2 - 80 - 80) * 0.55);
+    const BR_PCT_X = BR_BAR_X + BR_BAR_W + 14;
+
+    bracketsSvg += `
+      <line x1="${PAD}" y1="${BRACKET_Y - 8}" x2="${CARD_W - PAD}" y2="${BRACKET_Y - 8}"
+            stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+      <text x="${PAD}" y="${BRACKET_Y + 10}" fill="#4a4d5e" font-size="9" font-weight="bold"
+            font-family="DejaVu Sans" letter-spacing="2">LEVEL BRACKETS</text>`;
+
+    levelBrackets.forEach((br, i) => {
+      const rowY       = BRACKET_Y + 24 + i * 28;
+      const pct        = br.survivorPct;
+      const fill       = Math.round((pct / 100) * BR_BAR_W);
+      const displayPct = isDinoCard ? (100 - pct) : pct;
+      const displayColor = displayPct >= 55 ? (isDinoCard ? '#ED4245' : '#57F287')
+                         : displayPct <= 45 ? (isDinoCard ? '#57F287' : '#ED4245')
+                         : '#FEE75C';
+      const lowSample = br.total < 20 ? ' ⚠' : '';
+
+      bracketsSvg += `
+        <text x="${PAD}" y="${rowY + 13}" fill="#8b8fa8" font-size="12"
+              font-family="DejaVu Sans">${escapeXml(br.label)}</text>
+        <rect x="${BR_BAR_X}" y="${rowY + 3}" width="${BR_BAR_W}" height="12" rx="4"
+              fill="rgba(255,255,255,0.05)"/>
+        <rect x="${BR_BAR_X}" y="${rowY + 3}" width="${fill}" height="12" rx="4"
+              fill="${displayColor}" opacity="0.8"/>
+        <text x="${BR_PCT_X}" y="${rowY + 14}" fill="${displayColor}" font-size="13" font-weight="bold"
+              font-family="DejaVu Sans">${displayPct}%</text>
+        <text x="${CARD_W - PAD}" y="${rowY + 14}" fill="#4a4d5e" font-size="11"
+              font-family="DejaVu Sans" text-anchor="end">${br.total}r${lowSample}</text>`;
+    });
+  }
+
+  const ftY = FOOTER_Y + 26;
+  const footer = `
+    <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#0e0f11"/>
+    <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}"
+          stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+    <text x="${PAD}" y="${ftY}" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>
+    <rect x="${CARD_W - 118}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
+    <text x="${CARD_W - 104}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="middle">PG</text>
+    <text x="${CARD_W - 84}" y="${ftY}" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans">PrimalGame</text>`;
+
+  const cardSvg = `
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${CARD_H}" fill="#15171a"/>
+  ${header}
+  ${hero}
+  ${infoCells}
+  ${bracketsSvg}
+  ${footer}
+</svg>`;
+
+  const flat = await sharp(Buffer.from(cardSvg)).png().toBuffer();
+  const maskBuffer = await sharp(Buffer.from(`
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${CARD_H}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
+</svg>`)).png().toBuffer();
+
+  return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
+}
+
+module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, buildWinRateCard, buildWinRateCardV2, buildBalanceReportCard, buildGameStatsOverviewCard, bucketRoundsByMap, PALETTE, MAP_COLORS };
