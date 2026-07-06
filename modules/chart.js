@@ -2107,8 +2107,13 @@ async function buildGameStatsOverviewCard({
 }
 
 // ─── buildWinRateCardV2 ───────────────────────────────────────────────────────
-// Experimental redesign — no left panel, full-width, tinted hero, card-in-card
-// info cells, ranked bracket list. Wire to /testwinrate for side-by-side compare.
+// Experimental redesign v2.1 — improvements:
+//   1. Full-width top accent stripe (vs 4px left stripe)
+//   2. Desaturated bar fills, full saturation numbers
+//   3. Elevated info zone background for depth separation
+//   4. Stronger cell borders for surface elevation
+//   5. Bracket bars use displayPct for fill (not raw survivorPct)
+//   6. Three-tier type hierarchy: bold numbers / regular labels / muted sub
 async function buildWinRateCardV2({
   itemName      = '',
   category      = '',
@@ -2155,17 +2160,18 @@ async function buildWinRateCardV2({
   const BRACKET_Y = INFO_Y + INFO_H + 16;
   const FOOTER_Y  = CARD_H - FOOTER_H;
 
-  const ACCENT_W = 4;
+  // Improvement 1: full-width top accent stripe (3px) instead of 4px left stripe
+  const ACCENT_H = 3;
   const header = `
-    <rect x="0" y="0" width="${ACCENT_W}" height="${HEADER_H}" fill="${catColor}"/>
-    <text x="${PAD}" y="30" fill="${catColor}" font-size="10" font-weight="bold"
+    <rect x="0" y="0" width="${CARD_W}" height="${ACCENT_H}" fill="${catColor}" opacity="0.9"/>
+    <text x="${PAD}" y="${ACCENT_H + 24}" fill="${catColor}" font-size="10"
           font-family="DejaVu Sans" letter-spacing="2">${escapeXml(catLabel + ' WIN RATE')}</text>
-    <text x="${PAD}" y="68" fill="#e8e9eb" font-size="36" font-weight="bold"
+    <text x="${PAD}" y="${ACCENT_H + 62}" fill="#e8e9eb" font-size="36" font-weight="bold"
           font-family="DejaVu Sans">${escapeXml(itemName)}</text>
-    <text x="${PAD}" y="90" fill="#72767d" font-size="13"
+    <text x="${PAD}" y="${ACCENT_H + 84}" fill="#5a5e6e" font-size="13"
           font-family="DejaVu Sans">${escapeXml(rounds.toLocaleString())} rounds · ${escapeXml(lookback)}</text>
-    <line x1="${PAD}" y1="${HEADER_H}" x2="${CARD_W - PAD}" y2="${HEADER_H}"
-          stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
+    <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}"
+          stroke="rgba(255,255,255,0.05)" stroke-width="1"/>`;
 
   const BAR_Y    = HERO_Y + 80;
   const BAR_H    = 20;
@@ -2176,29 +2182,34 @@ async function buildWinRateCardV2({
   const leftBarW  = isDinoCard ? dBarW : sBarW;
   const rightBarW = isDinoCard ? sBarW : dBarW;
 
+  // Improvement 2: desaturated bar fills, full-sat numbers, muted right number
+  const leftBarColor  = isDinoCard ? '#c43336' : '#3db866'; // desaturated fills
+  const rightBarColor = isDinoCard ? '#3db866' : '#c43336';
+
   const hero = `
     <rect x="0" y="${HERO_Y}" width="${CARD_W}" height="${HERO_H}"
           fill="${dominantColor}" opacity="${tintOpacity}"/>
-    <text x="${PAD}" y="${HERO_Y + 20}" fill="${leftColor}" font-size="10" font-weight="bold"
+    <text x="${PAD}" y="${HERO_Y + 20}" fill="${leftColor}" font-size="10"
           font-family="DejaVu Sans" letter-spacing="2">${escapeXml(leftLabel)}</text>
     <text x="${PAD}" y="${HERO_Y + 72}" fill="${leftColor}" font-size="64" font-weight="bold"
           font-family="DejaVu Sans">${leftPct}%</text>
-    <text x="${CARD_W - PAD}" y="${HERO_Y + 20}" fill="${rightColor}" font-size="10" font-weight="bold"
+    <text x="${CARD_W - PAD}" y="${HERO_Y + 20}" fill="${rightColor}" font-size="10"
           font-family="DejaVu Sans" letter-spacing="2" text-anchor="end">${escapeXml(rightLabel)}</text>
-    <text x="${CARD_W - PAD}" y="${HERO_Y + 72}" fill="${rightColor}" font-size="64" font-weight="bold"
-          font-family="DejaVu Sans" text-anchor="end">${rightPct}%</text>
+    <text x="${CARD_W - PAD}" y="${HERO_Y + 72}" fill="${rightColor}" font-size="48" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="end" opacity="0.7">${rightPct}%</text>
     <rect x="${BAR_X}" y="${BAR_Y}" width="${BAR_W}" height="${BAR_H}" rx="8"
           fill="rgba(255,255,255,0.05)"/>
-    ${leftBarW  > 0 ? `<rect x="${BAR_X}" y="${BAR_Y}" width="${leftBarW}" height="${BAR_H}" rx="8" fill="${leftColor}" opacity="0.85"/>` : ''}
-    ${rightBarW > 0 ? `<rect x="${BAR_X + leftBarW}" y="${BAR_Y}" width="${rightBarW}" height="${BAR_H}" rx="8" fill="${rightColor}" opacity="0.85"/>` : ''}
-    <line x1="${PAD}" y1="${INFO_Y}" x2="${CARD_W - PAD}" y2="${INFO_Y}"
-          stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
+    ${leftBarW  > 0 ? `<rect x="${BAR_X}" y="${BAR_Y}" width="${leftBarW}" height="${BAR_H}" rx="8" fill="${leftBarColor}" opacity="0.9"/>` : ''}
+    ${rightBarW > 0 ? `<rect x="${BAR_X + leftBarW}" y="${BAR_Y}" width="${rightBarW}" height="${BAR_H}" rx="8" fill="${rightBarColor}" opacity="0.9"/>` : ''}`;
 
   const CELL_COUNT = 4;
   const CELL_GAP   = 12;
   const CELL_W     = Math.floor((CARD_W - PAD * 2 - CELL_GAP * (CELL_COUNT - 1)) / CELL_COUNT);
   const CELL_H     = INFO_H - 16;
   const CELL_Y     = INFO_Y + 8;
+
+  // Improvement 3: elevated info zone background for depth separation
+  const infoZoneBg = `<rect x="0" y="${INFO_Y}" width="${CARD_W}" height="${INFO_H}" fill="#1a1d21"/>`;
 
   const coItemStr  = coItem  ? (coItem.name.length > 14 ? coItem.name.slice(0, 13) + '…' : coItem.name) : '—';
   const coItemSub  = coItem  ? `${coItem.count}× MVP rounds` : '';
@@ -2214,17 +2225,18 @@ async function buildWinRateCardV2({
     { label: 'SAMPLE SIZE',       value: rounds >= 1000 ? `${(rounds / 1000).toFixed(1)}k` : rounds.toString(), sub: `${rounds.toLocaleString()} rounds` },
   ];
 
-  let infoCells = '';
+  let infoCells = infoZoneBg;
   infoItems.forEach((item, i) => {
     const cx = PAD + i * (CELL_W + CELL_GAP);
+    // Improvement 4: stronger cell borders + slightly lighter cell bg for elevation
     infoCells += `
       <rect x="${cx}" y="${CELL_Y}" width="${CELL_W}" height="${CELL_H}" rx="8"
-            fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
-      <text x="${cx + 14}" y="${CELL_Y + 20}" fill="#4a4d5e" font-size="9" font-weight="bold"
-            font-family="DejaVu Sans" letter-spacing="1.5">${escapeXml(item.label)}</text>
+            fill="#21252b" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>
+      <text x="${cx + 14}" y="${CELL_Y + 20}" fill="#4a4d5e" font-size="9"
+            font-family="DejaVu Sans" letter-spacing="2">${escapeXml(item.label)}</text>
       <text x="${cx + 14}" y="${CELL_Y + 54}" fill="#e8e9eb" font-size="20" font-weight="bold"
             font-family="DejaVu Sans">${escapeXml(item.value)}</text>
-      <text x="${cx + 14}" y="${CELL_Y + 74}" fill="#72767d" font-size="11"
+      <text x="${cx + 14}" y="${CELL_Y + 74}" fill="#5a5e6e" font-size="11"
             font-family="DejaVu Sans">${escapeXml(item.sub)}</text>`;
   });
 
@@ -2243,21 +2255,27 @@ async function buildWinRateCardV2({
     levelBrackets.forEach((br, i) => {
       const rowY       = BRACKET_Y + 24 + i * 28;
       const pct        = br.survivorPct;
-      const fill       = Math.round((pct / 100) * BR_BAR_W);
       const displayPct = isDinoCard ? (100 - pct) : pct;
+      // Improvement 5: bar fill uses displayPct so bar length matches displayed number
+      const fill       = Math.round((displayPct / 100) * BR_BAR_W);
       const displayColor = displayPct >= 55 ? (isDinoCard ? '#ED4245' : '#57F287')
                          : displayPct <= 45 ? (isDinoCard ? '#57F287' : '#ED4245')
                          : '#FEE75C';
+      // Desaturated bar fill, full-sat number
+      const barFillColor = displayPct >= 55 ? (isDinoCard ? '#c43336' : '#3db866')
+                         : displayPct <= 45 ? (isDinoCard ? '#3db866' : '#c43336')
+                         : '#c4a42a';
       const lowSample = br.total < 20 ? ' ⚠' : '';
 
+      // Improvement 6: three-tier hierarchy — bold number, regular label, muted sub
       bracketsSvg += `
-        <text x="${PAD}" y="${rowY + 13}" fill="#8b8fa8" font-size="12"
+        <text x="${PAD}" y="${rowY + 13}" fill="#6b6e7a" font-size="12"
               font-family="DejaVu Sans">${escapeXml(br.label)}</text>
         <rect x="${BR_BAR_X}" y="${rowY + 3}" width="${BR_BAR_W}" height="12" rx="4"
               fill="rgba(255,255,255,0.05)"/>
         <rect x="${BR_BAR_X}" y="${rowY + 3}" width="${fill}" height="12" rx="4"
-              fill="${displayColor}" opacity="0.8"/>
-        <text x="${BR_PCT_X}" y="${rowY + 14}" fill="${displayColor}" font-size="13" font-weight="bold"
+              fill="${barFillColor}" opacity="0.85"/>
+        <text x="${BR_PCT_X}" y="${rowY + 14}" fill="${displayColor}" font-size="14" font-weight="bold"
               font-family="DejaVu Sans">${displayPct}%</text>
         <text x="${CARD_W - PAD}" y="${rowY + 14}" fill="#4a4d5e" font-size="11"
               font-family="DejaVu Sans" text-anchor="end">${br.total}r${lowSample}</text>`;
@@ -2277,11 +2295,17 @@ async function buildWinRateCardV2({
     <text x="${CARD_W - 84}" y="${ftY}" fill="#72767d" font-size="13"
           font-family="DejaVu Sans">PrimalGame</text>`;
 
+  // Bracket zone bg — matches body to separate from elevated info zone
+  const bracketZoneBg = levelBrackets.length > 0
+    ? `<rect x="0" y="${INFO_Y + INFO_H}" width="${CARD_W}" height="${BRACKET_H + 40}" fill="#15171a"/>`
+    : '';
+
   const cardSvg = `
 <svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
   <rect width="${CARD_W}" height="${CARD_H}" fill="#15171a"/>
   ${header}
   ${hero}
+  ${bracketZoneBg}
   ${infoCells}
   ${bracketsSvg}
   ${footer}
