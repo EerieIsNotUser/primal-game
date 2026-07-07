@@ -2282,7 +2282,7 @@ async function buildWinRateCardV2({
       <line x1="${PAD}" y1="${BRACKET_Y - 8}" x2="${CARD_W - PAD}" y2="${BRACKET_Y - 8}"
             stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
       <text x="${PAD}" y="${BRACKET_Y + 14}" fill="#6b6e7a" font-size="9"
-            font-family="DejaVu Sans" letter-spacing="2">LEVEL BRACKETS</text>`;
+            font-family="DejaVu Sans" letter-spacing="2">AVG LOBBY LEVEL</text>`;
 
     levelBrackets.forEach((br, i) => {
       const rowY       = BRACKET_Y + 24 + i * 28;
