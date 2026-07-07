@@ -433,6 +433,15 @@ module.exports = {
     const cardDinoWins     = isDino ? survivorWins : dinoWins;
 
     const resolvedCategory = category === 'dino' ? 'dino' : category;
+
+    // Game mode split
+    const normalRows = rows.filter(r => r.game_mode === 'Normal');
+    const dtRows     = rows.filter(r => r.game_mode === 'Double Trouble');
+    const gameModeData = {
+      normal: { rounds: normalRows.length, wins: normalRows.filter(r => r.round_result === (isDino ? 'DinoWin' : 'SurvivorWin')).length },
+      dt:     { rounds: dtRows.length,     wins: dtRows.filter(r => r.round_result === (isDino ? 'DinoWin' : 'SurvivorWin')).length },
+    };
+
     const cardBuffer = await buildWinRateCardV2({
       itemName:      item,
       category:      resolvedCategory,
@@ -448,6 +457,7 @@ module.exports = {
         survivorPct: isDino ? (100 - br.survivorPct) : br.survivorPct,
         total:       br.total,
       })),
+      gameModeData,
     });
 
     // ── Attachment ────────────────────────────────────────────────────────

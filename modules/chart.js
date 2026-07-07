@@ -2125,6 +2125,7 @@ async function buildWinRateCardV2({
   coItem        = null,
   baseline      = null,
   levelBrackets = [],
+  gameModeData  = null,
 } = {}) {
   const CARD_W   = 1200;
   const FOOTER_H = 40;
@@ -2253,7 +2254,20 @@ async function buildWinRateCardV2({
     { label: 'BEST MAP',          value: bestMapStr, sub: bestMapSub },
     { label: coLabel,             value: coItemStr,  sub: coItemSub  },
     { label: 'ALL-TIME BASELINE', value: baseStr,    sub: baseSub    },
-    { label: 'GAME MODE',         value: 'PENDING',   sub: '',           pending: true },
+    gameModeData
+      ? (() => {
+          const nPct = gameModeData.normal.rounds > 0
+            ? Math.round((gameModeData.normal.wins / gameModeData.normal.rounds) * 100) : null;
+          const dPct = gameModeData.dt.rounds > 0
+            ? Math.round((gameModeData.dt.wins / gameModeData.dt.rounds) * 100) : null;
+          const value = nPct !== null ? `${nPct}%` : (dPct !== null ? `${dPct}%` : '—');
+          const sub   = [
+            nPct !== null ? `Normal ${nPct}% (${gameModeData.normal.rounds}r)` : null,
+            dPct !== null ? `DT ${dPct}% (${gameModeData.dt.rounds}r)` : null,
+          ].filter(Boolean).join(' · ');
+          return { label: 'GAME MODE', value, sub };
+        })()
+      : { label: 'GAME MODE', value: 'PENDING', sub: '', pending: true },
   ];
 
   let infoCells = infoZoneBg;
