@@ -2151,9 +2151,10 @@ async function buildWinRateCardV2({
   const HEADER_H  = 100;
   const HERO_H    = 140;
   const INFO_H    = 100;
-  const BRACKET_H = levelBrackets.length > 0 ? 28 + levelBrackets.length * 28 : 0;
-  const BODY_H    = HEADER_H + HERO_H + INFO_H + BRACKET_H + (BRACKET_H > 0 ? 16 : 0);
-  const CARD_H    = BODY_H + FOOTER_H + 24;
+  const BRACKET_H  = levelBrackets.length > 0 ? 28 + levelBrackets.length * 28 : 0;
+  const PLATFORM_H = 28 + 3 * 28; // label + 3 platform rows (PC, Mobile, Console)
+  const BODY_H     = HEADER_H + HERO_H + INFO_H + BRACKET_H + (BRACKET_H > 0 ? 16 : 0) + PLATFORM_H + 24;
+  const CARD_H     = BODY_H + FOOTER_H + 24;
 
   const HERO_Y    = HEADER_H;
   const INFO_Y    = HEADER_H + HERO_H;
@@ -2209,8 +2210,8 @@ async function buildWinRateCardV2({
           fill="rgba(255,255,255,0.05)"/>
     ${leftBarW  > 0 ? `<rect x="${BAR_X}" y="${BAR_Y}" width="${Math.max(0, leftBarW - 1)}" height="${BAR_H}" rx="8" fill="${leftBarColor}" opacity="0.9"/>` : ''}
     ${rightBarW > 0 ? `<rect x="${BAR_X + leftBarW + 1}" y="${BAR_Y}" width="${Math.max(0, rightBarW - 1)}" height="${BAR_H}" rx="8" fill="${rightBarColor}" opacity="0.9"/>` : ''}
-    ${leftBarLabel  ? `<text x="${leftLabelX.toFixed(0)}"  y="${BAR_Y + 14}" fill="rgba(255,255,255,0.55)" font-size="11" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(leftBarLabel)}</text>`  : ''}
-    ${rightBarLabel ? `<text x="${rightLabelX.toFixed(0)}" y="${BAR_Y + 14}" fill="rgba(255,255,255,0.55)" font-size="11" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(rightBarLabel)}</text>` : ''}`;
+    ${leftBarLabel  ? `<text x="${leftLabelX.toFixed(0)}"  y="${BAR_Y + 14}" fill="rgba(255,255,255,0.75)" font-size="11" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(leftBarLabel)}</text>`  : ''}
+    ${rightBarLabel ? `<text x="${rightLabelX.toFixed(0)}" y="${BAR_Y + 14}" fill="rgba(255,255,255,0.75)" font-size="11" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(rightBarLabel)}</text>` : ''}`;
 
   const CELL_COUNT = 4;
   const CELL_GAP   = 12;
@@ -2232,7 +2233,7 @@ async function buildWinRateCardV2({
     { label: 'BEST MAP',          value: bestMapStr, sub: bestMapSub },
     { label: coLabel,             value: coItemStr,  sub: coItemSub  },
     { label: 'ALL-TIME BASELINE', value: baseStr,    sub: baseSub    },
-    { label: 'SAMPLE SIZE',       value: rounds >= 1000 ? `${(rounds / 1000).toFixed(1)}k` : rounds.toString(), sub: `${rounds.toLocaleString()} rounds` },
+    { label: 'GAME MODE',         value: '—',        sub: 'coming soon' },
   ];
 
   let infoCells = infoZoneBg;
@@ -2253,7 +2254,7 @@ async function buildWinRateCardV2({
   let bracketsSvg = '';
   if (levelBrackets.length > 0) {
     const BR_BAR_X = PAD + 80;
-    const BR_BAR_W = Math.floor((CARD_W - PAD * 2 - 80 - 80) * 0.55);
+    const BR_BAR_W = Math.floor((CARD_W - PAD * 2 - 80 - 80) * 0.65);
     const BR_PCT_X = BR_BAR_X + BR_BAR_W + 14;
 
     bracketsSvg += `
@@ -2292,13 +2293,39 @@ async function buildWinRateCardV2({
     });
   }
 
+  // Platform section — placeholder rows until KKG adds platform to payload
+  const PLATFORM_Y = BRACKET_Y + BRACKET_H + 24;
+  const PL_BAR_X   = PAD + 80;
+  const PL_BAR_W   = Math.floor((CARD_W - PAD * 2 - 80 - 80) * 0.65);
+  const PL_PCT_X   = PL_BAR_X + PL_BAR_W + 14;
+  const platforms  = ['PC', 'Mobile', 'Console'];
+
+  let platformSvg = `
+    <line x1="${PAD}" y1="${PLATFORM_Y - 8}" x2="${CARD_W - PAD}" y2="${PLATFORM_Y - 8}"
+          stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+    <text x="${PAD}" y="${PLATFORM_Y + 14}" fill="#6b6e7a" font-size="9"
+          font-family="DejaVu Sans" letter-spacing="2">PLATFORM BREAKDOWN</text>`;
+
+  platforms.forEach((platform, i) => {
+    const rowY = PLATFORM_Y + 24 + i * 28;
+    platformSvg += `
+      <text x="${PAD}" y="${rowY + 13}" fill="#6b6e7a" font-size="12"
+            font-family="DejaVu Sans">${escapeXml(platform)}</text>
+      <rect x="${PL_BAR_X}" y="${rowY + 3}" width="${PL_BAR_W}" height="12" rx="4"
+            fill="rgba(255,255,255,0.05)"/>
+      <text x="${PL_PCT_X}" y="${rowY + 14}" fill="#4a4d5e" font-size="13"
+            font-family="DejaVu Sans">—</text>
+      <text x="${CARD_W - PAD}" y="${rowY + 14}" fill="#4a4d5e" font-size="11"
+            font-family="DejaVu Sans" text-anchor="end">no data yet</text>`;
+  });
+
   const ftY = FOOTER_Y + 26;
   const footer = `
     <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#0e0f11"/>
     <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}"
           stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
     <text x="${PAD}" y="${ftY}" fill="#72767d" font-size="13"
-          font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>
+          font-family="DejaVu Sans">All times UTC</text>
     <rect x="${CARD_W - 118}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
     <text x="${CARD_W - 104}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold"
           font-family="DejaVu Sans" text-anchor="middle">PG</text>
@@ -2306,9 +2333,7 @@ async function buildWinRateCardV2({
           font-family="DejaVu Sans">PrimalGame</text>`;
 
   // Bracket zone bg — matches body to separate from elevated info zone
-  const bracketZoneBg = levelBrackets.length > 0
-    ? `<rect x="0" y="${INFO_Y + INFO_H}" width="${CARD_W}" height="${BRACKET_H + 48}" fill="#15171a"/>`
-    : '';
+  const bracketZoneBg = `<rect x="0" y="${INFO_Y + INFO_H}" width="${CARD_W}" height="${BRACKET_H + PLATFORM_H + 72}" fill="#15171a"/>`;
 
   const cardSvg = `
 <svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
@@ -2318,6 +2343,7 @@ async function buildWinRateCardV2({
   ${bracketZoneBg}
   ${infoCells}
   ${bracketsSvg}
+  ${platformSvg}
   ${footer}
 </svg>`;
 
