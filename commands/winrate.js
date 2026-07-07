@@ -22,7 +22,7 @@ const { buildWinRateCardV2 } = require('../modules/chart');
 
 const VEHICLES = ['ATV', 'Golf Cart', 'Jeep', 'Hypercar', 'Pickup Truck', 'Police Car', 'Pumpkin Wagon', 'Buggy', 'Hybrid', 'Banana Car', 'Go-Kart', 'Bush Car', 'Muscle Car', 'Ambulance', 'Tow Truck', 'MRAP', 'Warthod', 'The Hornet', 'Humvee', 'Cyber-Beast', 'Monster Truck', 'Scrapper', 'Lunar Rover'];
 const WEAPONS = ['Pistol', 'Shotgun', 'MP5', 'Light Sniper', 'AR-15', 'AK-47', 'Crossbow', 'Heavy Sniper', 'AR-Dino', 'AR-Uni', 'P90', 'Water Gun', 'Raygun', 'Scar', 'Trike Shotgun', 'Minigun', 'IWS 2000', 'LMG', 'Deagle', 'Railgun', 'Plasma Rifle', 'Flamethrower', 'Tri-Beam', 'Scrapyard Shotgun', 'SPAS-12'];
-const DINOS = ['T-Rex', 'Pachy', 'Raptor', 'Carno', 'Dilo', 'Baryonyx', 'Cerato', 'Giga', 'Spino', 'Trike', 'Deino', 'Bronto', 'Exoraptor', 'Allo', 'Lava Giga', 'Mecha T-Rex', 'Mecha Raptor', 'Mecha Spino', 'The Monster', 'The Beast', 'Sabertooth'];
+const DINOS = ['T-Rex', 'Pachy', 'Raptor', 'Carno', 'Dilo', 'Baryonyx', 'Cerato', 'Giga', 'Spino', 'Trike', 'Deino', 'Bronto', 'Exoraptor', 'Allo', 'Lava Giga', 'Mecha T-Rex', 'Mecha Raptor', 'Mecha Spino', 'The Monster', 'The Beast', 'Sabertooth', 'Zombie Spino', 'Skeleton T-Rex'];
 
 const GAME_MODE_OPTIONS = [
   { name: 'Normal',         value: 'Normal'         },
