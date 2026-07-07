@@ -2290,12 +2290,11 @@ async function buildWinRateCardV2({
       const displayPct = isDinoCard ? (100 - pct) : pct;
       // Improvement 5: bar fill uses displayPct so bar length matches displayed number
       const fill       = Math.round((displayPct / 100) * BR_BAR_W);
-      const displayColor = displayPct >= 55 ? (isDinoCard ? '#ED4245' : '#57F287')
-                         : displayPct <= 45 ? (isDinoCard ? '#57F287' : '#ED4245')
+      const displayColor = displayPct >= 55 ? '#ED4245'
+                         : displayPct <= 45 ? '#57F287'
                          : '#FEE75C';
-      // Desaturated bar fill, full-sat number
-      const barFillColor = displayPct >= 55 ? (isDinoCard ? '#c43336' : '#3db866')
-                         : displayPct <= 45 ? (isDinoCard ? '#3db866' : '#c43336')
+      const barFillColor = displayPct >= 55 ? '#c43336'
+                         : displayPct <= 45 ? '#3db866'
                          : '#c4a42a';
       const lowSample = br.total < 20 ? ' ⚠' : '';
 
