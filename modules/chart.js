@@ -2290,10 +2290,12 @@ async function buildWinRateCardV2({
       const displayPct = isDinoCard ? (100 - pct) : pct;
       // Improvement 5: bar fill uses displayPct so bar length matches displayed number
       const fill       = Math.round((displayPct / 100) * BR_BAR_W);
-      const displayColor = displayPct >= 55 ? '#ED4245'
+      const displayColor = displayPct >= 60 ? '#ED4245'
+                         : displayPct < 30  ? '#FEE75C'
                          : displayPct <= 45 ? '#57F287'
                          : '#FEE75C';
-      const barFillColor = displayPct >= 55 ? '#c43336'
+      const barFillColor = displayPct >= 60 ? '#c43336'
+                         : displayPct < 30  ? '#c4a42a'
                          : displayPct <= 45 ? '#3db866'
                          : '#c4a42a';
       const lowSample = br.total < 20 ? ' ⚠' : '';
