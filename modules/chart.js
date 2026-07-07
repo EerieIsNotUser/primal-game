@@ -732,33 +732,6 @@ async function buildStatCard({
 
   // ── Composite + rounded corners ───────────────────────────────────────
   const composites = [];
-
-  // Header top-left icon
-  if (iconCircleBuffer) {
-    const iconY = Math.floor((HEADER_H - ICON_SZ) / 2);
-    composites.push({ input: iconCircleBuffer, top: iconY, left: PAD });
-  }
-
-  // Footer bottom-right icon (smaller, 20px)
-  if (iconCircleBuffer) {
-    const ICON_SM = 20;
-    try {
-      const iconRaw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
-        .resize(ICON_SM, ICON_SM, { fit: 'cover' })
-        .png()
-        .toBuffer();
-      const iconMask = await sharp(Buffer.from(
-        `<svg width="${ICON_SM}" height="${ICON_SM}" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="${ICON_SM / 2}" cy="${ICON_SM / 2}" r="${ICON_SM / 2}" fill="white"/>
-        </svg>`
-      )).png().toBuffer();
-      const iconSmallBuffer = await sharp(iconRaw)
-        .composite([{ input: iconMask, blend: 'dest-in' }])
-        .png()
-        .toBuffer();
-      composites.push({ input: iconSmallBuffer, top: FOOTER_Y + 10, left: CARD_W - 118 });
-    } catch (_) {}
-  }
   if (iconBuffer) composites.push({ input: iconBuffer, top: ICON_Y, left: ICON_X });
 
   const flat = composites.length > 0
