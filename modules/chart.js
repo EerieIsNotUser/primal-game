@@ -2141,7 +2141,7 @@ async function buildWinRateCardV2({
   const leftColor   = isDinoCard ? '#ED4245'       : '#57F287';
   const rightColor  = isDinoCard ? '#57F287'       : '#ED4245';
   const catLabel    = category === 'vehicle' ? 'VEHICLE' : isDinoCard ? 'DINOSAUR' : 'WEAPON';
-  const catColor    = category === 'vehicle' ? '#5865F2' : isDinoCard ? '#F07830'  : '#ED4245';
+  const catColor    = category === 'vehicle' ? '#5865F2' : isDinoCard ? '#F5863A'  : '#ED4245';
   const coLabel     = category === 'vehicle' ? 'TOP CO-GUN' : isDinoCard ? 'TOP CO-DINO' : 'TOP CO-CAR';
 
   const dominantPct   = Math.max(leftPct, rightPct);
@@ -2157,7 +2157,7 @@ async function buildWinRateCardV2({
 
   const HERO_Y    = HEADER_H;
   const INFO_Y    = HEADER_H + HERO_H;
-  const BRACKET_Y = INFO_Y + INFO_H + 16;
+  const BRACKET_Y = INFO_Y + INFO_H + 24;
   const FOOTER_Y  = CARD_H - FOOTER_H;
 
   // Improvement 1: full-width top accent stripe (3px) instead of 4px left stripe
@@ -2182,9 +2182,17 @@ async function buildWinRateCardV2({
   const leftBarW  = isDinoCard ? dBarW : sBarW;
   const rightBarW = isDinoCard ? sBarW : dBarW;
 
-  // Improvement 2: desaturated bar fills, full-sat numbers, muted right number
-  const leftBarColor  = isDinoCard ? '#c43336' : '#3db866'; // desaturated fills
+  const leftBarColor  = isDinoCard ? '#c43336' : '#3db866';
   const rightBarColor = isDinoCard ? '#3db866' : '#c43336';
+
+  // Inline round counts — only shown if segment wide enough to contain label
+  const leftRounds    = isDinoCard ? dinoWins     : survivorWins;
+  const rightRounds   = isDinoCard ? survivorWins : dinoWins;
+  const MIN_LABEL_W   = 90;
+  const leftBarLabel  = leftBarW  >= MIN_LABEL_W ? `${leftRounds.toLocaleString()}r`  : '';
+  const rightBarLabel = rightBarW >= MIN_LABEL_W ? `${rightRounds.toLocaleString()}r` : '';
+  const leftLabelX    = BAR_X + leftBarW / 2;
+  const rightLabelX   = BAR_X + leftBarW + rightBarW / 2;
 
   const hero = `
     <rect x="0" y="${HERO_Y}" width="${CARD_W}" height="${HERO_H}"
@@ -2195,12 +2203,14 @@ async function buildWinRateCardV2({
           font-family="DejaVu Sans">${leftPct}%</text>
     <text x="${CARD_W - PAD}" y="${HERO_Y + 20}" fill="${rightColor}" font-size="10"
           font-family="DejaVu Sans" letter-spacing="2" text-anchor="end">${escapeXml(rightLabel)}</text>
-    <text x="${CARD_W - PAD}" y="${HERO_Y + 72}" fill="${rightColor}" font-size="48" font-weight="bold"
-          font-family="DejaVu Sans" text-anchor="end" opacity="0.7">${rightPct}%</text>
+    <text x="${CARD_W - PAD}" y="${HERO_Y + 72}" fill="${rightColor}" font-size="64" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="end">${rightPct}%</text>
     <rect x="${BAR_X}" y="${BAR_Y}" width="${BAR_W}" height="${BAR_H}" rx="8"
           fill="rgba(255,255,255,0.05)"/>
-    ${leftBarW  > 0 ? `<rect x="${BAR_X}" y="${BAR_Y}" width="${leftBarW}" height="${BAR_H}" rx="8" fill="${leftBarColor}" opacity="0.9"/>` : ''}
-    ${rightBarW > 0 ? `<rect x="${BAR_X + leftBarW}" y="${BAR_Y}" width="${rightBarW}" height="${BAR_H}" rx="8" fill="${rightBarColor}" opacity="0.9"/>` : ''}`;
+    ${leftBarW  > 0 ? `<rect x="${BAR_X}" y="${BAR_Y}" width="${Math.max(0, leftBarW - 1)}" height="${BAR_H}" rx="8" fill="${leftBarColor}" opacity="0.9"/>` : ''}
+    ${rightBarW > 0 ? `<rect x="${BAR_X + leftBarW + 1}" y="${BAR_Y}" width="${Math.max(0, rightBarW - 1)}" height="${BAR_H}" rx="8" fill="${rightBarColor}" opacity="0.9"/>` : ''}
+    ${leftBarLabel  ? `<text x="${leftLabelX.toFixed(0)}"  y="${BAR_Y + 14}" fill="rgba(255,255,255,0.55)" font-size="11" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(leftBarLabel)}</text>`  : ''}
+    ${rightBarLabel ? `<text x="${rightLabelX.toFixed(0)}" y="${BAR_Y + 14}" fill="rgba(255,255,255,0.55)" font-size="11" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(rightBarLabel)}</text>` : ''}`;
 
   const CELL_COUNT = 4;
   const CELL_GAP   = 12;
@@ -2249,7 +2259,7 @@ async function buildWinRateCardV2({
     bracketsSvg += `
       <line x1="${PAD}" y1="${BRACKET_Y - 8}" x2="${CARD_W - PAD}" y2="${BRACKET_Y - 8}"
             stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
-      <text x="${PAD}" y="${BRACKET_Y + 10}" fill="#4a4d5e" font-size="9" font-weight="bold"
+      <text x="${PAD}" y="${BRACKET_Y + 14}" fill="#6b6e7a" font-size="9"
             font-family="DejaVu Sans" letter-spacing="2">LEVEL BRACKETS</text>`;
 
     levelBrackets.forEach((br, i) => {
@@ -2297,7 +2307,7 @@ async function buildWinRateCardV2({
 
   // Bracket zone bg — matches body to separate from elevated info zone
   const bracketZoneBg = levelBrackets.length > 0
-    ? `<rect x="0" y="${INFO_Y + INFO_H}" width="${CARD_W}" height="${BRACKET_H + 40}" fill="#15171a"/>`
+    ? `<rect x="0" y="${INFO_Y + INFO_H}" width="${CARD_W}" height="${BRACKET_H + 48}" fill="#15171a"/>`
     : '';
 
   const cardSvg = `
