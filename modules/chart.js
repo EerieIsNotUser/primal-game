@@ -2157,7 +2157,6 @@ async function buildWinRateCardV2({
   const FOOTER_H = 40;
   const CORNER_R = 14;
   const PAD      = 36;
-  const ICON_SZ  = 28;
 
   const isDinoCard  = category === 'dino';
   const survivorPct = rounds > 0 ? Math.round((survivorWins / rounds) * 100) : 0;
