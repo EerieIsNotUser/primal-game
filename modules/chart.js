@@ -2199,7 +2199,8 @@ async function buildWinRateCardV2({
   const INFO_H    = 100;
   const BRACKET_H  = levelBrackets.length > 0 ? 28 + levelBrackets.length * 28 : 0;
   const PLATFORM_H = 28 + 3 * 28;
-  const BODY_H     = HEADER_H + HERO_H + INFO_H + BRACKET_H + (BRACKET_H > 0 ? 16 : 0) + PLATFORM_H + 24;
+  const ABILITY_H  = isDinoCard ? 28 + 3 * 28 : 0;
+  const BODY_H     = HEADER_H + HERO_H + INFO_H + BRACKET_H + (BRACKET_H > 0 ? 16 : 0) + PLATFORM_H + 24 + ABILITY_H + (isDinoCard ? 32 : 0);
   const CARD_H     = BODY_H + FOOTER_H + 24;
 
   const HERO_Y    = HEADER_H;
@@ -2370,6 +2371,37 @@ async function buildWinRateCardV2({
             font-family="DejaVu Sans" text-anchor="end">no data yet</text>`;
   });
 
+  // Ability section — dino cards only, placeholder until KKG adds ABILITY_4 to payload
+  let abilitySvg = '';
+  if (isDinoCard) {
+    const ABILITY_Y  = PLATFORM_Y + PLATFORM_H + 32;
+    const AB_BAR_X   = PAD + 80;
+    const AB_BAR_W   = Math.floor((CARD_W - PAD * 2 - 80 - 80) * 0.65);
+    const AB_PCT_X   = AB_BAR_X + AB_BAR_W + 14;
+    const abPlatforms = ['PC', 'Mobile', 'Console'];
+    const abColors    = ['#7289da', '#57F287', '#FAA61A'];
+
+    abilitySvg = `
+      <line x1="${PAD}" y1="${ABILITY_Y - 8}" x2="${CARD_W - PAD}" y2="${ABILITY_Y - 8}"
+            stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+      <text x="${PAD}" y="${ABILITY_Y + 14}" fill="#6b6e7a" font-size="9"
+            font-family="DejaVu Sans" letter-spacing="2">ABILITY_4 SUCCESS RATE · BY PLATFORM</text>`;
+
+    abPlatforms.forEach((platform, i) => {
+      const rowY = ABILITY_Y + 24 + i * 28;
+      abilitySvg += `
+        <circle cx="${PAD + 5}" cy="${rowY + 8}" r="4" fill="${abColors[i]}" opacity="0.8"/>
+        <text x="${PAD + 16}" y="${rowY + 13}" fill="#8b8fa8" font-size="12"
+              font-family="DejaVu Sans">${escapeXml(platform)}</text>
+        <rect x="${AB_BAR_X}" y="${rowY + 3}" width="${AB_BAR_W}" height="12" rx="4"
+              fill="rgba(255,255,255,0.05)"/>
+        <text x="${AB_PCT_X}" y="${rowY + 14}" fill="#4a4d5e" font-size="13"
+              font-family="DejaVu Sans">—</text>
+        <text x="${CARD_W - PAD}" y="${rowY + 14}" fill="#3d4050" font-size="11"
+              font-family="DejaVu Sans" text-anchor="end">no data yet</text>`;
+    });
+  }
+
   const ftY = FOOTER_Y + 26;
   const footer = `
     <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#0e0f11"/>
@@ -2383,7 +2415,7 @@ async function buildWinRateCardV2({
   // Bracket zone bg — matches body to separate from elevated info zone
   const bracketZoneBg = `
     <rect x="0" y="${INFO_Y + INFO_H}" width="${CARD_W}" height="${BRACKET_H + 64}" fill="#15171a"/>
-    <rect x="0" y="${INFO_Y + INFO_H + BRACKET_H + 64}" width="${CARD_W}" height="${PLATFORM_H + 40}" fill="#161819"/>`;
+    <rect x="0" y="${INFO_Y + INFO_H + BRACKET_H + 64}" width="${CARD_W}" height="${PLATFORM_H + (isDinoCard ? ABILITY_H + 72 : 40)}" fill="#161819"/>`;
 
   const cardSvg = `
 <svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
@@ -2394,6 +2426,7 @@ async function buildWinRateCardV2({
   ${infoCells}
   ${bracketsSvg}
   ${platformSvg}
+  ${abilitySvg}
   ${footer}
 </svg>`;
 
