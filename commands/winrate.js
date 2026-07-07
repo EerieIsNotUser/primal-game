@@ -440,7 +440,6 @@ module.exports = {
     const winResultType = isDino ? 'DinoWin' : 'SurvivorWin';
     const normalWins = normalRows.filter(r => r.round_result === winResultType).length;
     const dtWins     = dtRows.filter(r => r.round_result === winResultType).length;
-    console.log(`[winrate debug] isDino=${isDino} category=${category} winResultType=${winResultType} normalRows=${normalRows.length} normalWins=${normalWins} dtRows=${dtRows.length} dtWins=${dtWins}`);
     const gameModeData = {
       normal: { rounds: normalRows.length, wins: normalWins },
       dt:     { rounds: dtRows.length,     wins: dtWins     },
@@ -458,7 +457,7 @@ module.exports = {
       baseline:      baseline && baseline.total >= 5 ? { rate: baseline.wins / baseline.total, rounds: baseline.total } : null,
       levelBrackets: levelBrackets.map(br => ({
         label:       br.label,
-        survivorPct: isDino ? (100 - br.survivorPct) : br.survivorPct,
+        survivorPct: br.survivorPct,
         total:       br.total,
       })),
       gameModeData,
