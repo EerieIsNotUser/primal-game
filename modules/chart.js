@@ -2376,7 +2376,7 @@ async function buildWinRateCardV2({
     <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}"
           stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
     <text x="${PAD}" y="${ftY}" fill="#72767d" font-size="13"
-          font-family="DejaVu Sans">All times UTC · PrimalGame</text>
+          font-family="DejaVu Sans">All times UTC</text>
     <text x="${CARD_W - 94}" y="${ftY}" fill="#72767d" font-size="13"
           font-family="DejaVu Sans" text-anchor="end">PrimalGame</text>`;
 
