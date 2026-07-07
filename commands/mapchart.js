@@ -6,7 +6,7 @@ const {
   ButtonStyle,
   StringSelectMenuBuilder,
 } = require('discord.js');
-const { buildLineChartImage, buildDualAxisChartImage, buildChartCard, bucketRoundsByMap, MAP_COLORS } = require('../modules/chart');
+const { buildLineChartImage, buildDualAxisChartImage, buildMapChartCardV2, bucketRoundsByMap, MAP_COLORS } = require('../modules/chart');
 
 // ─── /mapchart ───────────────────────────────────────────────────────────
 // Two chart types, switchable via dropdown:
@@ -143,8 +143,7 @@ async function getSixMonthBaseline(supabase) {
     .from('round_logs')
     .select('map, round_result')
     .gte('played_at', sixMonthCutoff.toISOString())
-    .neq('place_id', '100026158235338')
-    .limit(100000);
+    .neq('place_id', '100026158235338');
 
   if (rawErr) return null;
 
@@ -253,8 +252,7 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
     .select('map, played_at, round_result')
     .gte('played_at', startDate.toISOString())
     .lte('played_at', endDate.toISOString())
-    .neq('place_id', '100026158235338')
-    .limit(100000);
+    .neq('place_id', '100026158235338');
 
   if (error) return interaction.editReply('❌ Something went wrong fetching round data.');
   if (!rows || rows.length === 0) return interaction.editReply(`No round data found for the past ${days} days.`);
@@ -285,14 +283,27 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
     cardTitle = 'Map Popularity';
   }
 
-  const buffer = await buildChartCard(chartBuffer, {
-    title: cardTitle,
-    subtitle: `Primal Pursuit · Past ${days} Days`,
+  // Build corner colors: assign each map a corner in display order
+  const CORNER_ORDER = ['tl', 'tr', 'bl', 'br'];
+  const mapCornerColors = mapsShown.slice(0, 4).map((map, i) => ({
+    color:  MAP_COLORS[map] ?? '#5865F2',
+    corner: CORNER_ORDER[i],
+  }));
+  // Dominant map (most rounds) drives the accent stripe
+  const dominantMap   = mapsShown[0] ?? null;
+  const dominantAccent = dominantMap ? (MAP_COLORS[dominantMap] ?? '#5865F2') : '#5865F2';
+
+  const buffer = await buildMapChartCardV2(chartBuffer, {
+    title:       cardTitle,
+    subtitle:    `Primal Pursuit · Past ${days} Days`,
     stats: [
       { label: 'Total Rounds', value: rows.length.toLocaleString(), color: '#5865F2' },
-      { label: 'Maps', value: mapsShown.length.toString(), color: '#57F287' },
+      { label: 'Maps',         value: mapsShown.length.toString(),  color: '#57F287' },
     ],
-    lookback: `Past ${days} Days`,
+    lookback:    `Past ${days} Days`,
+    mode:        'map_popularity',
+    colors:      mapCornerColors,
+    accentColor: dominantAccent,
   });
 
   const narrative = buildChartNarrative(rows, baselineRows, mapsShown);
@@ -323,8 +334,8 @@ async function renderWinRateOverTime(interaction, supabase, category, item, days
 
   // Fetch all rounds in window (for total volume bars)
   const [{ data: itemRows, error: itemErr }, { data: allRows, error: allErr }] = await Promise.all([
-    itemQuery.limit(100000),
-    supabase.from('round_logs').select('played_at').gte('played_at', cutoffISO).neq('place_id', '100026158235338').limit(100000),
+    itemQuery,
+    supabase.from('round_logs').select('played_at').gte('played_at', cutoffISO).neq('place_id', '100026158235338'),
   ]);
 
   if (itemErr || allErr) return interaction.editReply('❌ Something went wrong fetching round data.');
@@ -357,14 +368,21 @@ async function renderWinRateOverTime(interaction, supabase, category, item, days
     true
   );
 
-  const buffer = await buildChartCard(chartBuffer, {
-    title: `${item} — Win Rate Over Time`,
+  // Win rate over time: ambient color bleeds from left edge only in item color
+  const buffer = await buildMapChartCardV2(chartBuffer, {
+    title:    `${item} — Win Rate Over Time`,
     subtitle: `Primal Pursuit · ${catLabel} · Past ${days} Days`,
     stats: [
-      { label: 'MVP Rounds',   value: itemRows.length.toLocaleString(), color: lineColor   },
+      { label: 'MVP Rounds',   value: itemRows.length.toLocaleString(),        color: lineColor  },
       { label: 'Total Rounds', value: (allRows?.length ?? 0).toLocaleString(), color: '#5865F2' },
     ],
-    lookback: `Past ${days} Days`,
+    lookback:    `Past ${days} Days`,
+    mode:        'win_rate',
+    colors:      [
+      { color: lineColor, corner: 'tl' },
+      { color: lineColor, corner: 'bl' },
+    ],
+    accentColor: lineColor,
   });
 
   const attachment = new AttachmentBuilder(buffer, { name: 'winratechart.png' });

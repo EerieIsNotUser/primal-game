@@ -2426,4 +2426,196 @@ async function buildWinRateCardV2({
   return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
 }
 
-module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, buildWinRateCard, buildWinRateCardV2, buildBalanceReportCard, buildGameStatsOverviewCard, bucketRoundsByMap, PALETTE, MAP_COLORS };
+// ─── buildMapChartCardV2 ─────────────────────────────────────────────────────
+// Card shell for /mapchart (Map Popularity and Win Rate Over Time).
+// Replaces the generic buildChartCard with a design that:
+//   • Uses map-color ambient radial gradients in the header zone — one per
+//     corner, each in that map's canonical color at low opacity, bleeding
+//     inward like atmospheric light. No photos needed; identity comes from color.
+//   • For Win Rate Over Time: single-color ambient from the left edge only,
+//     in the item's accent color, fading right — implies the data source.
+//   • Header: thin 3px top accent stripe, category label, bold title, stat boxes.
+//   • Chart area: dark base that sits under the composited chart buffer.
+//   • Footer: minimal, same as V2.
+//
+// @param chartBuffer  PNG from buildLineChartImage / buildDualAxisChartImage
+// @param opts
+//   title      {string}   card title
+//   subtitle   {string}   card subtitle
+//   stats      {Array}    up to 3 × { label, value, color? } — header stat boxes
+//   lookback   {string}   footer left text
+//   mode       {string}   'map_popularity' | 'win_rate'
+//   colors     {Array}    map-color objects: { color, corner } where corner is
+//                         'tl'|'tr'|'bl'|'br'. For win_rate pass 1–2 entries
+//                         with corner 'tl'|'bl' only.
+//   accentColor {string}  hex — top stripe color
+async function buildMapChartCardV2(chartBuffer, {
+  title       = '',
+  subtitle    = '',
+  stats       = [],
+  lookback    = '',
+  mode        = 'map_popularity',
+  colors      = [],
+  accentColor = '#5865F2',
+} = {}) {
+  const CARD_W   = 1200;
+  const HEADER_H = 90;
+  const FOOTER_H = 40;
+  const CORNER_R = 14;
+  const ACCENT_H = 3;
+  const PAD      = 20;
+
+  const { height: CHART_H } = await sharp(chartBuffer).metadata();
+  const CARD_H   = HEADER_H + CHART_H + FOOTER_H;
+  const FOOTER_Y = HEADER_H + CHART_H;
+
+  // ── Ambient radial gradients (header zone only — chart sits on top) ───────
+  // Each entry in colors = { color: '#hex', corner: 'tl'|'tr'|'bl'|'br' }
+  // Orbs are placed at card corners, radius ~680px so they bleed well inward.
+  // Opacity 9% at center → 0% at edge: vivid enough to read, dim enough to
+  // never compete with chart data or text.
+  const GRAD_R = 680;
+  const cornerCoords = {
+    tl: { cx: 0,       cy: 0       },
+    tr: { cx: CARD_W,  cy: 0       },
+    bl: { cx: 0,       cy: CARD_H  },
+    br: { cx: CARD_W,  cy: CARD_H  },
+  };
+
+  let gradDefs = '';
+  let gradRects = '';
+  colors.forEach((c, i) => {
+    const id    = `mapGrad${i}`;
+    const coord = cornerCoords[c.corner] ?? { cx: 0, cy: 0 };
+    const rgb   = hexToRgb(c.color);
+    gradDefs += `
+      <radialGradient id="${id}" gradientUnits="userSpaceOnUse"
+          cx="${coord.cx}" cy="${coord.cy}" r="${GRAD_R}">
+        <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.09"/>
+        <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
+      </radialGradient>`;
+    // Apply gradient as a full-card rect — only visible in header/footer zones
+    // since the chart PNG composited on top covers the chart zone fully.
+    gradRects += `<rect width="${CARD_W}" height="${CARD_H}" fill="url(#${id})"/>`;
+  });
+
+  // ── Icon ──────────────────────────────────────────────────────────────────
+  const ICON_SZ = 28;
+  let iconBuffer = null;
+  try {
+    const raw  = await sharp(path.join(__dirname, 'assets', 'icon.png'))
+      .resize(ICON_SZ, ICON_SZ, { fit: 'cover' })
+      .png()
+      .toBuffer();
+    const mask = await sharp(Buffer.from(
+      `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="${ICON_SZ / 2}" cy="${ICON_SZ / 2}" r="${ICON_SZ / 2}" fill="white"/>
+      </svg>`
+    )).png().toBuffer();
+    iconBuffer = await sharp(raw)
+      .composite([{ input: mask, blend: 'dest-in' }])
+      .png()
+      .toBuffer();
+  } catch (_) {}
+
+  const TEXT_X = iconBuffer ? PAD + ICON_SZ + 12 : PAD;
+
+  // ── Stat boxes (right side of header, V2 style) ───────────────────────────
+  const BOX_W   = 160;
+  const BOX_H   = 62;
+  const BOX_GAP = 10;
+  const BOX_Y   = Math.round((HEADER_H - BOX_H) / 2);
+  const capped  = stats.slice(0, 3);
+  const totalBW = capped.length * BOX_W + Math.max(0, capped.length - 1) * BOX_GAP;
+  let statBoxesSvg = '';
+  capped.forEach((s, i) => {
+    const bx  = CARD_W - PAD - totalBW + i * (BOX_W + BOX_GAP);
+    const col = s.color || '#5865F2';
+    statBoxesSvg += `
+      <rect x="${bx}" y="${BOX_Y}" width="${BOX_W}" height="${BOX_H}" rx="6" fill="#111214"
+            stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+      <circle cx="${bx + 16}" cy="${BOX_Y + 20}" r="4" fill="${col}"/>
+      <text x="${bx + 28}" y="${BOX_Y + 25}" fill="#7e8294" font-size="10"
+            font-family="DejaVu Sans" letter-spacing="1.5">${escapeXml(s.label.toUpperCase())}</text>
+      <text x="${bx + 14}" y="${BOX_Y + 52}" fill="#e8e9eb" font-size="20" font-weight="bold"
+            font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
+  });
+
+  // ── Header text ───────────────────────────────────────────────────────────
+  const titleEl = title
+    ? `<text x="${TEXT_X}" y="${ACCENT_H + 44}" fill="#e8e9eb" font-size="22" font-weight="bold"
+             font-family="DejaVu Sans">${escapeXml(title)}</text>`
+    : '';
+  const subtitleEl = subtitle
+    ? `<text x="${TEXT_X}" y="${ACCENT_H + 66}" fill="#5a5e6e" font-size="13"
+             font-family="DejaVu Sans">${escapeXml(subtitle)}</text>`
+    : '';
+
+  // ── Footer ────────────────────────────────────────────────────────────────
+  const ftY        = FOOTER_Y + 26;
+  const footerLeft = lookback
+    ? `<text x="${PAD}" y="${ftY}" fill="#72767d" font-size="13"
+             font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>`
+    : '';
+  const footerRight = `
+    <circle cx="${CARD_W - 98}" cy="${FOOTER_Y + 20}" r="4.5" fill="#5865F2"/>
+    <text x="${CARD_W - 88}" y="${ftY}" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans">PrimalGame</text>`;
+
+  // ── Card SVG ──────────────────────────────────────────────────────────────
+  const cardSvg = `
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <defs>${gradDefs}</defs>
+
+  <!-- Base: near-black -->
+  <rect width="${CARD_W}" height="${CARD_H}" fill="#0f1012"/>
+
+  <!-- Ambient color bleed from corners -->
+  ${gradRects}
+
+  <!-- Header surface — very subtle elevation, not opaque so gradient shows -->
+  <rect width="${CARD_W}" height="${HEADER_H}" fill="rgba(255,255,255,0.025)"/>
+
+  <!-- Top accent stripe -->
+  <rect width="${CARD_W}" height="${ACCENT_H}" fill="${accentColor}" opacity="0.85"/>
+
+  <!-- Divider between header and chart -->
+  <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}"
+        stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+
+  <!-- Chart zone background — chart PNG composites on top of this -->
+  <rect y="${HEADER_H}" width="${CARD_W}" height="${CHART_H}" fill="#12141700"/>
+
+  <!-- Footer -->
+  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="rgba(0,0,0,0.35)"/>
+  <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}"
+        stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+
+  ${statBoxesSvg}
+  ${titleEl}
+  ${subtitleEl}
+  ${footerLeft}
+  ${footerRight}
+</svg>`;
+
+  // ── Composite: card → chart → icon → rounded mask ─────────────────────────
+  const composites = [{ input: chartBuffer, top: HEADER_H, left: 0 }];
+  if (iconBuffer) composites.push({ input: iconBuffer, top: 18, left: PAD });
+
+  const flat = await sharp(Buffer.from(cardSvg))
+    .composite(composites)
+    .png()
+    .toBuffer();
+
+  const maskBuffer = await sharp(Buffer.from(`
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${CARD_H}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
+</svg>`)).png().toBuffer();
+
+  return sharp(flat)
+    .composite([{ input: maskBuffer, blend: 'dest-in' }])
+    .png()
+    .toBuffer();
+}
+
+module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, buildWinRateCard, buildWinRateCardV2, buildMapChartCardV2, buildBalanceReportCard, buildGameStatsOverviewCard, bucketRoundsByMap, PALETTE, MAP_COLORS };
