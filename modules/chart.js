@@ -100,13 +100,16 @@ async function buildLineChartImage(labels, series, title) {
     return padding.top + plotH - (v / yMax) * plotH;
   }
 
-  // Gridlines + y-axis labels (horizontal only, no vertical gridlines)
+  // Gridlines + y-axis labels — dashed lines at low opacity, muted labels
   const gridStep = yMax / 5;
   let gridlinesSvg = '';
-  for (let v = 0; v <= yMax; v += gridStep) {
+  // Y=0 baseline: slightly brighter floor line to anchor the chart
+  const baselineY = yFor(0);
+  gridlinesSvg += `<line x1="${PADDING.left}" y1="${baselineY.toFixed(2)}" x2="${WIDTH - PADDING.right}" y2="${baselineY.toFixed(2)}" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>`;
+  for (let v = gridStep; v <= yMax; v += gridStep) {
     const y = yFor(v);
-    gridlinesSvg += `<line x1="${PADDING.left}" y1="${y.toFixed(2)}" x2="${WIDTH - PADDING.right}" y2="${y.toFixed(2)}" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`;
-    gridlinesSvg += `<text x="${PADDING.left - 10}" y="${(y + 4).toFixed(2)}" fill="#dcddde" font-size="13" font-family="DejaVu Sans" text-anchor="end">${Math.round(v)}</text>`;
+    gridlinesSvg += `<line x1="${PADDING.left}" y1="${y.toFixed(2)}" x2="${WIDTH - PADDING.right}" y2="${y.toFixed(2)}" stroke="rgba(255,255,255,0.04)" stroke-width="1" stroke-dasharray="4,4"/>`;
+    gridlinesSvg += `<text x="${PADDING.left - 10}" y="${(y + 4).toFixed(2)}" fill="#4a4e5a" font-size="12" font-family="DejaVu Sans" text-anchor="end">${Math.round(v)}</text>`;
   }
 
   // X-axis labels — thin out if too many to avoid overlap
@@ -115,7 +118,7 @@ async function buildLineChartImage(labels, series, title) {
   let xLabelsSvg = '';
   labels.forEach((label, i) => {
     if (i % labelStep !== 0 && i !== labels.length - 1) return;
-    xLabelsSvg += `<text x="${xFor(i).toFixed(2)}" y="${HEIGHT - 15}" fill="#dcddde" font-size="13" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(label)}</text>`;
+    xLabelsSvg += `<text x="${xFor(i).toFixed(2)}" y="${HEIGHT - 15}" fill="#4a4e5a" font-size="12" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(label)}</text>`;
   });
 
   // Build each series: gradient def, fill path, line path
@@ -127,11 +130,15 @@ async function buildLineChartImage(labels, series, title) {
     const color = s.color || PALETTE[idx % PALETTE.length];
     const rgb = hexToRgb(color);
     const gradId = `grad${idx}`;
-    const topAlpha = isMulti ? 0.28 : 0.5;
+    // Multi-series: lower fill opacity so overlapping series don't create mud.
+    // Gradient fades from 65% height (not 0%) so fill hugs the bottom rather
+    // than flooding the full chart area.
+    const topAlpha = isMulti ? 0.18 : 0.45;
 
     defsSvg += `
       <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${topAlpha}"/>
+        <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${topAlpha}"/>
+        <stop offset="65%"  stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${(topAlpha * 0.3).toFixed(3)}"/>
         <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
       </linearGradient>`;
 
@@ -140,10 +147,10 @@ async function buildLineChartImage(labels, series, title) {
     const fillPath = `${linePath} L ${xFor(s.data.length - 1).toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${xFor(0).toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
 
     fillsSvg += `<path d="${fillPath}" fill="url(#${gradId})"/>`;
-    linesSvg += `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+    linesSvg += `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
   });
 
-  // Legend — only shown for multi-series, positioned below the title
+  // Legend — line swatches (match actual chart lines), muted label text
   let legendSvg = '';
   if (isMulti) {
     let legendX = PADDING.left;
@@ -151,11 +158,11 @@ async function buildLineChartImage(labels, series, title) {
     series.forEach((s, idx) => {
       const color = s.color || PALETTE[idx % PALETTE.length];
       const labelText = escapeXml(s.label);
-      const swatchW = 22;
-      const textW = labelText.length * 7.5 + 28; // rough estimate for spacing
+      const swatchW = 20;
+      const textW = labelText.length * 7.2 + 24;
       legendSvg += `
-        <rect x="${legendX}" y="${legendY - 10}" width="${swatchW}" height="12" rx="3" fill="none" stroke="${color}" stroke-width="2.5"/>
-        <text x="${legendX + swatchW + 8}" y="${legendY}" fill="#dcddde" font-size="14" font-family="DejaVu Sans">${labelText}</text>`;
+        <line x1="${legendX}" y1="${legendY - 4}" x2="${legendX + swatchW}" y2="${legendY - 4}" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/>
+        <text x="${legendX + swatchW + 8}" y="${legendY}" fill="#8b8fa8" font-size="13" font-family="DejaVu Sans">${labelText}</text>`;
       legendX += swatchW + 8 + textW;
     });
   }
@@ -167,7 +174,7 @@ async function buildLineChartImage(labels, series, title) {
   const svg = `
 <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
   <defs>${defsSvg}</defs>
-  <rect width="${WIDTH}" height="${HEIGHT}" fill="#2b2d31"/>
+  <rect width="${WIDTH}" height="${HEIGHT}" fill="#0f1012"/>
   ${gridlinesSvg}
   ${fillsSvg}
   ${linesSvg}
@@ -269,11 +276,12 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
     const color = s.color || PALETTE[idx % PALETTE.length];
     const rgb = hexToRgb(color);
     const gradId = `dualGrad${idx}`;
-    const topAlpha = isMultiLine ? 0.25 : 0.5;
+    const topAlpha = isMultiLine ? 0.18 : 0.42;
 
     defsSvg += `
       <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${topAlpha}"/>
+        <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${topAlpha}"/>
+        <stop offset="65%"  stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${(topAlpha * 0.3).toFixed(3)}"/>
         <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
       </linearGradient>`;
 
@@ -281,30 +289,31 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
     const linePath = smoothPath(points, padding.top + plotH, padding.top);
     const fillPath = `${linePath} L ${xFor(s.data.length - 1).toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${xFor(0).toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
     fillsSvg += `<path d="${fillPath}" fill="url(#${gradId})"/>`;
-    linesSvg += `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+    linesSvg += `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
   });
 
-  // Gridlines referenced to the right (line) axis, Statbot-style
+  // Gridlines — dashed at low opacity, solid baseline at Y=0
   const gridStep = rightMax / 5;
   let gridSvg = '';
-  for (let v = 0; v <= rightMax; v += gridStep) {
+  const dualBaselineY = yForRight(0);
+  gridSvg += `<line x1="${padding.left}" y1="${dualBaselineY.toFixed(2)}" x2="${WIDTH - padding.right}" y2="${dualBaselineY.toFixed(2)}" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>`;
+  for (let v = gridStep; v <= rightMax; v += gridStep) {
     const y = yForRight(v);
-    gridSvg += `<line x1="${padding.left}" y1="${y.toFixed(2)}" x2="${WIDTH - padding.right}" y2="${y.toFixed(2)}" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`;
+    gridSvg += `<line x1="${padding.left}" y1="${y.toFixed(2)}" x2="${WIDTH - padding.right}" y2="${y.toFixed(2)}" stroke="rgba(255,255,255,0.04)" stroke-width="1" stroke-dasharray="4,4"/>`;
   }
 
-  // Left axis labels (grey, matches bar color)
+  // Left axis labels — muted
   const leftStep = leftMax / 5;
   let leftAxisSvg = '';
   for (let v = 0; v <= leftMax; v += leftStep) {
     const y = yForLeft(v);
-    leftAxisSvg += `<text x="${padding.left - 10}" y="${(y + 4).toFixed(2)}" fill="#999999" font-size="12" font-family="DejaVu Sans" text-anchor="end">${Math.round(v)}</text>`;
+    leftAxisSvg += `<text x="${padding.left - 10}" y="${(y + 4).toFixed(2)}" fill="#4a4e5a" font-size="12" font-family="DejaVu Sans" text-anchor="end">${Math.round(v)}</text>`;
   }
-  // Right axis labels — neutral color when multi-line (no single color to match)
-  const rightAxisColor = '#999999';
+  // Right axis labels — muted
   let rightAxisSvg = '';
   for (let v = 0; v <= rightMax; v += gridStep) {
     const y = yForRight(v);
-    rightAxisSvg += `<text x="${WIDTH - padding.right + 8}" y="${(y + 4).toFixed(2)}" fill="${rightAxisColor}" font-size="11" font-family="DejaVu Sans" text-anchor="start" opacity="0.7">${Math.round(v)}</text>`;
+    rightAxisSvg += `<text x="${WIDTH - padding.right + 8}" y="${(y + 4).toFixed(2)}" fill="#4a4e5a" font-size="11" font-family="DejaVu Sans" text-anchor="start">${Math.round(v)}</text>`;
   }
 
   // X-axis labels — thin out if too many
@@ -313,7 +322,7 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   let xLabelsSvg = '';
   labels.forEach((label, i) => {
     if (i % labelStep !== 0 && i !== labels.length - 1) return;
-    xLabelsSvg += `<text x="${xFor(i).toFixed(2)}" y="${HEIGHT - 15}" fill="#dcddde" font-size="13" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(label)}</text>`;
+    xLabelsSvg += `<text x="${xFor(i).toFixed(2)}" y="${HEIGHT - 15}" fill="#4a4e5a" font-size="12" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(label)}</text>`;
   });
 
   const titleSvg = title
@@ -325,22 +334,22 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   const barLabelText = escapeXml(barLabel);
   let legendX = 48 + barLabelText.length * 7.5 + 30;
   let legendSvg = `
-    <circle cx="35" cy="${legendY - 5}" r="5" fill="rgba(255,255,255,0.4)"/>
-    <text x="48" y="${legendY}" fill="#dcddde" font-size="14" font-family="DejaVu Sans">${barLabelText}</text>`;
+    <circle cx="35" cy="${legendY - 5}" r="4" fill="rgba(255,255,255,0.25)"/>
+    <text x="48" y="${legendY}" fill="#8b8fa8" font-size="13" font-family="DejaVu Sans">${barLabelText}</text>`;
 
   lineSeries.forEach((s, idx) => {
     const color = s.color || PALETTE[idx % PALETTE.length];
     const labelText = escapeXml(s.label);
     legendSvg += `
-      <rect x="${legendX}" y="${legendY - 10}" width="22" height="12" rx="3" fill="none" stroke="${color}" stroke-width="2.5"/>
-      <text x="${legendX + 30}" y="${legendY}" fill="#dcddde" font-size="14" font-family="DejaVu Sans">${labelText}</text>`;
-    legendX += 30 + labelText.length * 7.5 + 28;
+      <line x1="${legendX}" y1="${legendY - 4}" x2="${legendX + 20}" y2="${legendY - 4}" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/>
+      <text x="${legendX + 28}" y="${legendY}" fill="#8b8fa8" font-size="13" font-family="DejaVu Sans">${labelText}</text>`;
+    legendX += 28 + labelText.length * 7.2 + 24;
   });
 
   const svg = `
 <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
   <defs>${defsSvg}</defs>
-  <rect width="${WIDTH}" height="${HEIGHT}" fill="#2b2d31"/>
+  <rect width="${WIDTH}" height="${HEIGHT}" fill="#0f1012"/>
   ${gridSvg}
   ${barsSvg}
   ${fillsSvg}
@@ -2474,7 +2483,7 @@ async function buildMapChartCardV2(chartBuffer, {
   // Orbs are placed at card corners, radius ~680px so they bleed well inward.
   // Opacity 9% at center → 0% at edge: vivid enough to read, dim enough to
   // never compete with chart data or text.
-  const GRAD_R = 680;
+  const GRAD_R = 900;
   const cornerCoords = {
     tl: { cx: 0,       cy: 0       },
     tr: { cx: CARD_W,  cy: 0       },
@@ -2491,7 +2500,7 @@ async function buildMapChartCardV2(chartBuffer, {
     gradDefs += `
       <radialGradient id="${id}" gradientUnits="userSpaceOnUse"
           cx="${coord.cx}" cy="${coord.cy}" r="${GRAD_R}">
-        <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.09"/>
+        <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.17"/>
         <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
       </radialGradient>`;
     // Apply gradient as a full-card rect — only visible in header/footer zones
