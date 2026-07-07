@@ -438,9 +438,12 @@ module.exports = {
     const normalRows = rows.filter(r => r.game_mode === 'Normal');
     const dtRows     = rows.filter(r => r.game_mode === 'Double Trouble');
     const winResultType = isDino ? 'DinoWin' : 'SurvivorWin';
+    const normalWins = normalRows.filter(r => r.round_result === winResultType).length;
+    const dtWins     = dtRows.filter(r => r.round_result === winResultType).length;
+    console.log(`[winrate debug] isDino=${isDino} category=${category} winResultType=${winResultType} normalRows=${normalRows.length} normalWins=${normalWins} dtRows=${dtRows.length} dtWins=${dtWins}`);
     const gameModeData = {
-      normal: { rounds: normalRows.length, wins: normalRows.filter(r => r.round_result === winResultType).length },
-      dt:     { rounds: dtRows.length,     wins: dtRows.filter(r => r.round_result === winResultType).length },
+      normal: { rounds: normalRows.length, wins: normalWins },
+      dt:     { rounds: dtRows.length,     wins: dtWins     },
     };
 
     const cardBuffer = await buildWinRateCardV2({
