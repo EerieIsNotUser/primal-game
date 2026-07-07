@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
 const chrono = require('chrono-node');
-const { buildWinRateCard } = require('../modules/chart');
+const { buildWinRateCardV2 } = require('../modules/chart');
 
 // ─── /winrate ────────────────────────────────────────────────────────────
 // Filterable win rate query: pick a category (dino/vehicle/weapon), a
@@ -433,7 +433,7 @@ module.exports = {
     const cardDinoWins     = isDino ? survivorWins : dinoWins;
 
     const resolvedCategory = category === 'dino' ? 'dino' : category;
-    const cardBuffer = await buildWinRateCard({
+    const cardBuffer = await buildWinRateCardV2({
       itemName:      item,
       category:      resolvedCategory,
       lookback:      periodLabel,
