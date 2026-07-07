@@ -731,24 +731,6 @@ async function buildStatCard({
 </svg>`;
 
   // ── Composite + rounded corners ───────────────────────────────────────
-  // ── Load icon for header top-left and footer bottom-right ────────────────
-  let iconCircleBuffer = null;
-  try {
-    const iconRaw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
-      .resize(ICON_SZ, ICON_SZ, { fit: 'cover' })
-      .png()
-      .toBuffer();
-    const iconMask = await sharp(Buffer.from(
-      `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="${ICON_SZ / 2}" cy="${ICON_SZ / 2}" r="${ICON_SZ / 2}" fill="white"/>
-      </svg>`
-    )).png().toBuffer();
-    iconCircleBuffer = await sharp(iconRaw)
-      .composite([{ input: iconMask, blend: 'dest-in' }])
-      .png()
-      .toBuffer();
-  } catch (_) {}
-
   const composites = [];
 
   // Header top-left icon
@@ -758,7 +740,6 @@ async function buildStatCard({
   }
 
   // Footer bottom-right icon (smaller, 20px)
-  let iconSmallBuffer = null;
   if (iconCircleBuffer) {
     const ICON_SM = 20;
     try {
@@ -771,7 +752,7 @@ async function buildStatCard({
           <circle cx="${ICON_SM / 2}" cy="${ICON_SM / 2}" r="${ICON_SM / 2}" fill="white"/>
         </svg>`
       )).png().toBuffer();
-      iconSmallBuffer = await sharp(iconRaw)
+      const iconSmallBuffer = await sharp(iconRaw)
         .composite([{ input: iconMask, blend: 'dest-in' }])
         .png()
         .toBuffer();
@@ -2195,11 +2176,30 @@ async function buildWinRateCardV2({
   const dominantColor = leftPct > rightPct ? leftColor : rightColor;
   const tintOpacity   = dominantPct >= 58 ? 0.06 : dominantPct >= 52 ? 0.035 : 0.015;
 
+  // ── Load icon first so TEXT_X can reference it ────────────────────────────
+  const ICON_SZ = 28;
+  let iconCircleBuffer = null;
+  try {
+    const iconRaw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
+      .resize(ICON_SZ, ICON_SZ, { fit: 'cover' })
+      .png()
+      .toBuffer();
+    const iconMask = await sharp(Buffer.from(
+      `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="${ICON_SZ / 2}" cy="${ICON_SZ / 2}" r="${ICON_SZ / 2}" fill="white"/>
+      </svg>`
+    )).png().toBuffer();
+    iconCircleBuffer = await sharp(iconRaw)
+      .composite([{ input: iconMask, blend: 'dest-in' }])
+      .png()
+      .toBuffer();
+  } catch (_) {}
+
   const HEADER_H  = 100;
   const HERO_H    = 140;
   const INFO_H    = 100;
   const BRACKET_H  = levelBrackets.length > 0 ? 28 + levelBrackets.length * 28 : 0;
-  const PLATFORM_H = 28 + 3 * 28; // label + 3 platform rows (PC, Mobile, Console)
+  const PLATFORM_H = 28 + 3 * 28;
   const BODY_H     = HEADER_H + HERO_H + INFO_H + BRACKET_H + (BRACKET_H > 0 ? 16 : 0) + PLATFORM_H + 24;
   const CARD_H     = BODY_H + FOOTER_H + 24;
 
@@ -2208,7 +2208,6 @@ async function buildWinRateCardV2({
   const BRACKET_Y = INFO_Y + INFO_H + 32;
   const FOOTER_Y  = CARD_H - FOOTER_H;
 
-  // Improvement 1: full-width top accent stripe (3px) instead of 4px left stripe
   const ACCENT_H  = 3;
   const TEXT_X    = iconCircleBuffer ? PAD + ICON_SZ + 12 : PAD;
   const header = `
