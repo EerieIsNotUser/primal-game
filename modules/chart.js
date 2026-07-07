@@ -731,7 +731,53 @@ async function buildStatCard({
 </svg>`;
 
   // ── Composite + rounded corners ───────────────────────────────────────
+  // ── Load icon for header top-left and footer bottom-right ────────────────
+  let iconCircleBuffer = null;
+  try {
+    const iconRaw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
+      .resize(ICON_SZ, ICON_SZ, { fit: 'cover' })
+      .png()
+      .toBuffer();
+    const iconMask = await sharp(Buffer.from(
+      `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="${ICON_SZ / 2}" cy="${ICON_SZ / 2}" r="${ICON_SZ / 2}" fill="white"/>
+      </svg>`
+    )).png().toBuffer();
+    iconCircleBuffer = await sharp(iconRaw)
+      .composite([{ input: iconMask, blend: 'dest-in' }])
+      .png()
+      .toBuffer();
+  } catch (_) {}
+
   const composites = [];
+
+  // Header top-left icon
+  if (iconCircleBuffer) {
+    const iconY = Math.floor((HEADER_H - ICON_SZ) / 2);
+    composites.push({ input: iconCircleBuffer, top: iconY, left: PAD });
+  }
+
+  // Footer bottom-right icon (smaller, 20px)
+  let iconSmallBuffer = null;
+  if (iconCircleBuffer) {
+    const ICON_SM = 20;
+    try {
+      const iconRaw = await sharp(path.join(__dirname, 'assets', 'icon.png'))
+        .resize(ICON_SM, ICON_SM, { fit: 'cover' })
+        .png()
+        .toBuffer();
+      const iconMask = await sharp(Buffer.from(
+        `<svg width="${ICON_SM}" height="${ICON_SM}" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="${ICON_SM / 2}" cy="${ICON_SM / 2}" r="${ICON_SM / 2}" fill="white"/>
+        </svg>`
+      )).png().toBuffer();
+      iconSmallBuffer = await sharp(iconRaw)
+        .composite([{ input: iconMask, blend: 'dest-in' }])
+        .png()
+        .toBuffer();
+      composites.push({ input: iconSmallBuffer, top: FOOTER_Y + 10, left: CARD_W - 118 });
+    } catch (_) {}
+  }
   if (iconBuffer) composites.push({ input: iconBuffer, top: ICON_Y, left: ICON_X });
 
   const flat = composites.length > 0
@@ -2130,6 +2176,7 @@ async function buildWinRateCardV2({
   const FOOTER_H = 40;
   const CORNER_R = 14;
   const PAD      = 36;
+  const ICON_SZ  = 28;
 
   const isDinoCard  = category === 'dino';
   const survivorPct = rounds > 0 ? Math.round((survivorWins / rounds) * 100) : 0;
@@ -2162,14 +2209,15 @@ async function buildWinRateCardV2({
   const FOOTER_Y  = CARD_H - FOOTER_H;
 
   // Improvement 1: full-width top accent stripe (3px) instead of 4px left stripe
-  const ACCENT_H = 3;
+  const ACCENT_H  = 3;
+  const TEXT_X    = iconCircleBuffer ? PAD + ICON_SZ + 12 : PAD;
   const header = `
     <rect x="0" y="0" width="${CARD_W}" height="${ACCENT_H}" fill="${catColor}" opacity="0.9"/>
-    <text x="${PAD}" y="${ACCENT_H + 24}" fill="${catColor}" font-size="10"
+    <text x="${TEXT_X}" y="${ACCENT_H + 24}" fill="${catColor}" font-size="10"
           font-family="DejaVu Sans" letter-spacing="2">${escapeXml(catLabel + ' WIN RATE')}</text>
-    <text x="${PAD}" y="${ACCENT_H + 62}" fill="#e8e9eb" font-size="36" font-weight="bold"
+    <text x="${TEXT_X}" y="${ACCENT_H + 62}" fill="#e8e9eb" font-size="36" font-weight="bold"
           font-family="DejaVu Sans">${escapeXml(itemName)}</text>
-    <text x="${PAD}" y="${ACCENT_H + 84}" fill="#5a5e6e" font-size="13"
+    <text x="${TEXT_X}" y="${ACCENT_H + 84}" fill="#5a5e6e" font-size="13"
           font-family="DejaVu Sans">${escapeXml(rounds.toLocaleString())} rounds · ${escapeXml(lookback)}</text>
     <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}"
           stroke="rgba(255,255,255,0.05)" stroke-width="1"/>`;
@@ -2331,9 +2379,8 @@ async function buildWinRateCardV2({
           stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
     <text x="${PAD}" y="${ftY}" fill="#72767d" font-size="13"
           font-family="DejaVu Sans">All times UTC · PrimalGame</text>
-    <rect x="${CARD_W - 56}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
-    <text x="${CARD_W - 42}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold"
-          font-family="DejaVu Sans" text-anchor="middle">PG</text>`;
+    <text x="${CARD_W - 94}" y="${ftY}" fill="#72767d" font-size="13"
+          font-family="DejaVu Sans" text-anchor="end">PrimalGame</text>`;
 
   // Bracket zone bg — matches body to separate from elevated info zone
   const bracketZoneBg = `
