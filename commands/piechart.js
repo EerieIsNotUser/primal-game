@@ -43,7 +43,7 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode, days
 
   if (gameMode) query = query.eq('game_mode', gameMode);
 
-  const { data: rows, error } = await query.limit(100000);
+  const { data: rows, error } = await query;
   if (error) return interaction.editReply('❌ Something went wrong fetching round data.');
   if (!rows || rows.length === 0) return interaction.editReply(`No round data found for the past ${days} days.`);
 

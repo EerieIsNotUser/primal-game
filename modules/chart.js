@@ -2261,10 +2261,10 @@ async function buildWinRateCardV2({
           const dPct = gameModeData.dt.rounds > 0
             ? Math.round((gameModeData.dt.wins / gameModeData.dt.rounds) * 100) : null;
           const value = nPct !== null ? `${nPct}%` : (dPct !== null ? `${dPct}%` : '—');
-          const winLabel = isDinoCard ? 'dino win' : 'surv win';
+          const modeLabel = isDinoCard ? 'surv' : 'surv';
           const sub   = [
-            nPct !== null ? `Normal ${nPct}% ${winLabel} (${gameModeData.normal.rounds}r)` : null,
-            dPct !== null ? `DT ${dPct}% ${winLabel} (${gameModeData.dt.rounds}r)` : null,
+            nPct !== null ? `Normal ${nPct}% surv (${gameModeData.normal.rounds}r)` : null,
+            dPct !== null ? `DT ${dPct}% surv (${gameModeData.dt.rounds}r)` : null,
           ].filter(Boolean).join(' · ');
           return { label: 'GAME MODE', value, sub };
         })()
