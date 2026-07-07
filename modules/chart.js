@@ -2158,7 +2158,7 @@ async function buildWinRateCardV2({
 
   const HERO_Y    = HEADER_H;
   const INFO_Y    = HEADER_H + HERO_H;
-  const BRACKET_Y = INFO_Y + INFO_H + 24;
+  const BRACKET_Y = INFO_Y + INFO_H + 32;
   const FOOTER_Y  = CARD_H - FOOTER_H;
 
   // Improvement 1: full-width top accent stripe (3px) instead of 4px left stripe
@@ -2233,22 +2233,23 @@ async function buildWinRateCardV2({
     { label: 'BEST MAP',          value: bestMapStr, sub: bestMapSub },
     { label: coLabel,             value: coItemStr,  sub: coItemSub  },
     { label: 'ALL-TIME BASELINE', value: baseStr,    sub: baseSub    },
-    { label: 'GAME MODE',         value: '—',        sub: 'coming soon' },
+    { label: 'GAME MODE',         value: 'PENDING',   sub: '',           pending: true },
   ];
 
   let infoCells = infoZoneBg;
   infoItems.forEach((item, i) => {
-    const cx = PAD + i * (CELL_W + CELL_GAP);
-    // Improvement 4: stronger cell borders + slightly lighter cell bg for elevation
+    const cx        = PAD + i * (CELL_W + CELL_GAP);
+    const valueColor = item.pending ? '#3d4050' : '#e8e9eb';
+    const valueFontSize = item.pending ? '14' : '20';
     infoCells += `
       <rect x="${cx}" y="${CELL_Y}" width="${CELL_W}" height="${CELL_H}" rx="8"
             fill="#21252b" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>
-      <text x="${cx + 14}" y="${CELL_Y + 20}" fill="#4a4d5e" font-size="9"
-            font-family="DejaVu Sans" letter-spacing="2">${escapeXml(item.label)}</text>
-      <text x="${cx + 14}" y="${CELL_Y + 54}" fill="#e8e9eb" font-size="20" font-weight="bold"
+      <text x="${cx + 14}" y="${CELL_Y + 20}" fill="#7e8294" font-size="10"
+            font-family="DejaVu Sans" letter-spacing="1.5">${escapeXml(item.label)}</text>
+      <text x="${cx + 14}" y="${CELL_Y + 54}" fill="${valueColor}" font-size="${valueFontSize}" font-weight="bold"
             font-family="DejaVu Sans">${escapeXml(item.value)}</text>
-      <text x="${cx + 14}" y="${CELL_Y + 74}" fill="#5a5e6e" font-size="11"
-            font-family="DejaVu Sans">${escapeXml(item.sub)}</text>`;
+      ${item.sub ? `<text x="${cx + 14}" y="${CELL_Y + 74}" fill="#5a5e6e" font-size="11"
+            font-family="DejaVu Sans">${escapeXml(item.sub)}</text>` : ''}`;
   });
 
   let bracketsSvg = '';
@@ -2294,7 +2295,7 @@ async function buildWinRateCardV2({
   }
 
   // Platform section — placeholder rows until KKG adds platform to payload
-  const PLATFORM_Y = BRACKET_Y + BRACKET_H + 24;
+  const PLATFORM_Y = BRACKET_Y + BRACKET_H + 32;
   const PL_BAR_X   = PAD + 80;
   const PL_BAR_W   = Math.floor((CARD_W - PAD * 2 - 80 - 80) * 0.65);
   const PL_PCT_X   = PL_BAR_X + PL_BAR_W + 14;
@@ -2306,16 +2307,20 @@ async function buildWinRateCardV2({
     <text x="${PAD}" y="${PLATFORM_Y + 14}" fill="#6b6e7a" font-size="9"
           font-family="DejaVu Sans" letter-spacing="2">PLATFORM BREAKDOWN</text>`;
 
+  const platformColors = ['#7289da', '#57F287', '#FAA61A']; // PC=blurple, Mobile=green, Console=gold
+
   platforms.forEach((platform, i) => {
-    const rowY = PLATFORM_Y + 24 + i * 28;
+    const rowY    = PLATFORM_Y + 24 + i * 28;
+    const dotColor = platformColors[i];
     platformSvg += `
-      <text x="${PAD}" y="${rowY + 13}" fill="#6b6e7a" font-size="12"
+      <circle cx="${PAD + 5}" cy="${rowY + 8}" r="4" fill="${dotColor}" opacity="0.8"/>
+      <text x="${PAD + 16}" y="${rowY + 13}" fill="#8b8fa8" font-size="12"
             font-family="DejaVu Sans">${escapeXml(platform)}</text>
       <rect x="${PL_BAR_X}" y="${rowY + 3}" width="${PL_BAR_W}" height="12" rx="4"
             fill="rgba(255,255,255,0.05)"/>
       <text x="${PL_PCT_X}" y="${rowY + 14}" fill="#4a4d5e" font-size="13"
             font-family="DejaVu Sans">—</text>
-      <text x="${CARD_W - PAD}" y="${rowY + 14}" fill="#4a4d5e" font-size="11"
+      <text x="${CARD_W - PAD}" y="${rowY + 14}" fill="#3d4050" font-size="11"
             font-family="DejaVu Sans" text-anchor="end">no data yet</text>`;
   });
 
@@ -2325,15 +2330,15 @@ async function buildWinRateCardV2({
     <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}"
           stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
     <text x="${PAD}" y="${ftY}" fill="#72767d" font-size="13"
-          font-family="DejaVu Sans">All times UTC</text>
-    <rect x="${CARD_W - 118}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
-    <text x="${CARD_W - 104}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold"
-          font-family="DejaVu Sans" text-anchor="middle">PG</text>
-    <text x="${CARD_W - 84}" y="${ftY}" fill="#72767d" font-size="13"
-          font-family="DejaVu Sans">PrimalGame</text>`;
+          font-family="DejaVu Sans">All times UTC · PrimalGame</text>
+    <rect x="${CARD_W - 56}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
+    <text x="${CARD_W - 42}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold"
+          font-family="DejaVu Sans" text-anchor="middle">PG</text>`;
 
   // Bracket zone bg — matches body to separate from elevated info zone
-  const bracketZoneBg = `<rect x="0" y="${INFO_Y + INFO_H}" width="${CARD_W}" height="${BRACKET_H + PLATFORM_H + 72}" fill="#15171a"/>`;
+  const bracketZoneBg = `
+    <rect x="0" y="${INFO_Y + INFO_H}" width="${CARD_W}" height="${BRACKET_H + 64}" fill="#15171a"/>
+    <rect x="0" y="${INFO_Y + INFO_H + BRACKET_H + 64}" width="${CARD_W}" height="${PLATFORM_H + 40}" fill="#161819"/>`;
 
   const cardSvg = `
 <svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
