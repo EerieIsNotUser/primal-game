@@ -129,7 +129,7 @@ async function buildLineChartImage(labels, series, title, overlayOpts = null) {
   // ── X-axis labels ─────────────────────────────────────────────────────────
   const maxLabels = 14;
   const labelStep = Math.max(1, Math.ceil(labels.length / maxLabels));
-  const xLabelY   = isOverlay ? HEIGHT - 28 : HEIGHT - 15;
+  const xLabelY   = isOverlay ? HEIGHT - 42 : HEIGHT - 15;
   let xLabelsSvg = '';
   labels.forEach((label, i) => {
     if (i % labelStep !== 0 && i !== labels.length - 1) return;
@@ -222,14 +222,20 @@ async function buildLineChartImage(labels, series, title, overlayOpts = null) {
         <text x="${px + 12}" y="${py + 47}" fill="#e8e9eb" font-size="19" font-weight="bold"
               font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
     });
-    const footerY = HEIGHT - 22;
-    overlaySvg += `<line x1="${padding.left}" y1="${HEIGHT - 34}" x2="${WIDTH - padding.right}" y2="${HEIGHT - 34}" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>`;
+    // Footer strip — frosted dark band full-width, sits over chart fills
+    const FOOTER_STRIP_H = 36;
+    const FOOTER_STRIP_Y = HEIGHT - FOOTER_STRIP_H;
+    const footerTextY    = FOOTER_STRIP_Y + 23;
+    overlaySvg += `<rect x="0" y="${FOOTER_STRIP_Y}" width="${WIDTH}" height="${FOOTER_STRIP_H}" fill="#080a0c" fill-opacity="0.78"/>`;
+    overlaySvg += `<line x1="0" y1="${FOOTER_STRIP_Y}" x2="${WIDTH}" y2="${FOOTER_STRIP_Y}" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`;
     if (o.lookback) {
-      overlaySvg += `<text x="${padding.left}" y="${footerY}" fill="#2e3040" font-size="11" font-family="DejaVu Sans">Lookback: ${escapeXml(o.lookback)} — UTC</text>`;
+      overlaySvg += `<text x="${padding.left}" y="${footerTextY}" fill="#4a4e5a" font-size="12" font-family="DejaVu Sans">Lookback: ${escapeXml(o.lookback)} — UTC</text>`;
     }
+    // PrimalGame badge — blurple pill + white text
     overlaySvg += `
-      <circle cx="${WIDTH - padding.right - 78}" cy="${footerY - 4}" r="3.5" fill="#5865F2"/>
-      <text x="${WIDTH - padding.right - 70}" y="${footerY}" fill="#2e3040" font-size="11" font-family="DejaVu Sans">PrimalGame</text>`;
+      <rect x="${WIDTH - padding.right - 110}" y="${FOOTER_STRIP_Y + 8}" width="106" height="20" rx="5" fill="#5865F2" fill-opacity="0.18" stroke="#5865F2" stroke-opacity="0.35" stroke-width="1"/>
+      <circle cx="${WIDTH - padding.right - 96}" cy="${FOOTER_STRIP_Y + 18}" r="3.5" fill="#5865F2"/>
+      <text x="${WIDTH - padding.right - 87}" y="${footerTextY}" fill="#8a90d4" font-size="12" font-family="DejaVu Sans">PrimalGame</text>`;
   }
 
   const CORNER_R = 14;
@@ -397,7 +403,7 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
 
   const maxLabels = 14;
   const labelStep = Math.max(1, Math.ceil(labels.length / maxLabels));
-  const xLabelY2  = isOverlay ? HEIGHT - 28 : HEIGHT - 15;
+  const xLabelY2  = isOverlay ? HEIGHT - 42 : HEIGHT - 15;
   let xLabelsSvg = '';
   labels.forEach((label, i) => {
     if (i % labelStep !== 0 && i !== labels.length - 1) return;
@@ -457,14 +463,18 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
         <text x="${px + 12}" y="${py + 47}" fill="#e8e9eb" font-size="19" font-weight="bold"
               font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
     });
-    const footerY = HEIGHT - 22;
-    overlaySvg2 += `<line x1="${padding.left}" y1="${HEIGHT - 34}" x2="${WIDTH - padding.right}" y2="${HEIGHT - 34}" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>`;
+    const FOOTER_STRIP_H2 = 36;
+    const FOOTER_STRIP_Y2 = HEIGHT - FOOTER_STRIP_H2;
+    const footerTextY2    = FOOTER_STRIP_Y2 + 23;
+    overlaySvg2 += `<rect x="0" y="${FOOTER_STRIP_Y2}" width="${WIDTH}" height="${FOOTER_STRIP_H2}" fill="#080a0c" fill-opacity="0.78"/>`;
+    overlaySvg2 += `<line x1="0" y1="${FOOTER_STRIP_Y2}" x2="${WIDTH}" y2="${FOOTER_STRIP_Y2}" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`;
     if (o.lookback) {
-      overlaySvg2 += `<text x="${padding.left}" y="${footerY}" fill="#2e3040" font-size="11" font-family="DejaVu Sans">Lookback: ${escapeXml(o.lookback)} — UTC</text>`;
+      overlaySvg2 += `<text x="${padding.left}" y="${footerTextY2}" fill="#4a4e5a" font-size="12" font-family="DejaVu Sans">Lookback: ${escapeXml(o.lookback)} — UTC</text>`;
     }
     overlaySvg2 += `
-      <circle cx="${WIDTH - padding.right - 78}" cy="${footerY - 4}" r="3.5" fill="#5865F2"/>
-      <text x="${WIDTH - padding.right - 70}" y="${footerY}" fill="#2e3040" font-size="11" font-family="DejaVu Sans">PrimalGame</text>`;
+      <rect x="${WIDTH - padding.right - 110}" y="${FOOTER_STRIP_Y2 + 8}" width="106" height="20" rx="5" fill="#5865F2" fill-opacity="0.18" stroke="#5865F2" stroke-opacity="0.35" stroke-width="1"/>
+      <circle cx="${WIDTH - padding.right - 96}" cy="${FOOTER_STRIP_Y2 + 18}" r="3.5" fill="#5865F2"/>
+      <text x="${WIDTH - padding.right - 87}" y="${footerTextY2}" fill="#8a90d4" font-size="12" font-family="DejaVu Sans">PrimalGame</text>`;
   }
 
   const CORNER_R2 = 14;
