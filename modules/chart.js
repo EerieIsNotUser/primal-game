@@ -129,7 +129,7 @@ async function buildLineChartImage(labels, series, title, overlayOpts = null) {
   // ── X-axis labels ─────────────────────────────────────────────────────────
   const maxLabels = 14;
   const labelStep = Math.max(1, Math.ceil(labels.length / maxLabels));
-  const xLabelY   = isOverlay ? HEIGHT - 42 : HEIGHT - 15;
+  const xLabelY   = isOverlay ? HEIGHT - 50 : HEIGHT - 15;
   let xLabelsSvg = '';
   labels.forEach((label, i) => {
     if (i % labelStep !== 0 && i !== labels.length - 1) return;
@@ -233,9 +233,8 @@ async function buildLineChartImage(labels, series, title, overlayOpts = null) {
     }
     // PrimalGame badge — blurple pill + white text
     overlaySvg += `
-      <rect x="${WIDTH - padding.right - 110}" y="${FOOTER_STRIP_Y + 8}" width="106" height="20" rx="5" fill="#5865F2" fill-opacity="0.18" stroke="#5865F2" stroke-opacity="0.35" stroke-width="1"/>
-      <circle cx="${WIDTH - padding.right - 96}" cy="${FOOTER_STRIP_Y + 18}" r="3.5" fill="#5865F2"/>
-      <text x="${WIDTH - padding.right - 87}" y="${footerTextY}" fill="#8a90d4" font-size="12" font-family="DejaVu Sans">PrimalGame</text>`;
+      <circle cx="${WIDTH - padding.right - 84}" cy="${FOOTER_STRIP_Y + 18}" r="4" fill="#5865F2"/>
+      <text x="${WIDTH - padding.right - 75}" y="${footerTextY}" fill="#72767d" font-size="12" font-family="DejaVu Sans">PrimalGame</text>`;
   }
 
   const CORNER_R = 14;
@@ -403,7 +402,7 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
 
   const maxLabels = 14;
   const labelStep = Math.max(1, Math.ceil(labels.length / maxLabels));
-  const xLabelY2  = isOverlay ? HEIGHT - 42 : HEIGHT - 15;
+  const xLabelY2  = isOverlay ? HEIGHT - 50 : HEIGHT - 15;
   let xLabelsSvg = '';
   labels.forEach((label, i) => {
     if (i % labelStep !== 0 && i !== labels.length - 1) return;
@@ -472,9 +471,8 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
       overlaySvg2 += `<text x="${padding.left}" y="${footerTextY2}" fill="#4a4e5a" font-size="12" font-family="DejaVu Sans">Lookback: ${escapeXml(o.lookback)} — UTC</text>`;
     }
     overlaySvg2 += `
-      <rect x="${WIDTH - padding.right - 110}" y="${FOOTER_STRIP_Y2 + 8}" width="106" height="20" rx="5" fill="#5865F2" fill-opacity="0.18" stroke="#5865F2" stroke-opacity="0.35" stroke-width="1"/>
-      <circle cx="${WIDTH - padding.right - 96}" cy="${FOOTER_STRIP_Y2 + 18}" r="3.5" fill="#5865F2"/>
-      <text x="${WIDTH - padding.right - 87}" y="${footerTextY2}" fill="#8a90d4" font-size="12" font-family="DejaVu Sans">PrimalGame</text>`;
+      <circle cx="${WIDTH - padding.right - 84}" cy="${FOOTER_STRIP_Y2 + 18}" r="4" fill="#5865F2"/>
+      <text x="${WIDTH - padding.right - 75}" y="${footerTextY2}" fill="#72767d" font-size="12" font-family="DejaVu Sans">PrimalGame</text>`;
   }
 
   const CORNER_R2 = 14;
