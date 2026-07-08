@@ -80,69 +80,94 @@ function smoothPath(points, maxY = Infinity, minY = -Infinity) {
  * @param labels  array of x-axis labels
  * @param series  array of { label, data, color? }
  * @param title   chart title (top-left, bold)
+ * @param overlayOpts  optional full-bleed overlay opts
  * @returns Promise<Buffer> PNG image buffer
  */
-async function buildLineChartImage(labels, series, title) {
-  const isMulti = series.length > 1;
-  const topPadding = isMulti ? (title ? 90 : 60) : 50;
-  const padding = { ...PADDING, top: topPadding };
-  const plotH = HEIGHT - padding.top - padding.bottom;
+async function buildLineChartImage(labels, series, title, overlayOpts = null) {
+  const isOverlay     = overlayOpts !== null;
+  const isMulti       = series.length > 1;
+  const topPadding    = isOverlay ? 90 : (isMulti ? (title ? 90 : 60) : 50);
+  const bottomPadding = isOverlay ? 52 : 50;
+  const padding = { top: topPadding, right: 44, bottom: bottomPadding, left: 64 };
+  const plotH = HEIGHT - padding.top - bottomPadding;
+  const plotW = WIDTH - padding.left - padding.right;
 
-  // Determine y-axis max — round up to a clean increment
   const allValues = series.flatMap(s => s.data);
   const rawMax = Math.max(1, ...allValues);
   const yMax = Math.ceil(rawMax / 10) * 10 || 10;
 
   function xFor(i) {
-    return padding.left + (labels.length > 1 ? (i / (labels.length - 1)) * PLOT_W : PLOT_W / 2);
+    return padding.left + (labels.length > 1 ? (i / (labels.length - 1)) * plotW : plotW / 2);
   }
   function yFor(v) {
     return padding.top + plotH - (v / yMax) * plotH;
   }
 
-  // Gridlines + y-axis labels — dashed lines at low opacity, muted labels
+  // ── Ambient corner gradients ──────────────────────────────────────────────
+  const ambientColors = overlayOpts?.ambientColors ?? [];
+  const GRAD_R = 750;
+  const cornerCoords = {
+    tl: { cx: 0,     cy: 0      },
+    tr: { cx: WIDTH, cy: 0      },
+    bl: { cx: 0,     cy: HEIGHT },
+    br: { cx: WIDTH, cy: HEIGHT },
+  };
+  let ambientDefs = '';
+  let ambientRects = '';
+  ambientColors.forEach((c, i) => {
+    const id    = `ambLine${i}`;
+    const coord = cornerCoords[c.corner] ?? { cx: 0, cy: 0 };
+    const rgb   = hexToRgb(c.color);
+    ambientDefs += `
+      <radialGradient id="${id}" gradientUnits="userSpaceOnUse"
+          cx="${coord.cx}" cy="${coord.cy}" r="${GRAD_R}">
+        <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.22"/>
+        <stop offset="45%"  stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.07"/>
+        <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
+      </radialGradient>`;
+    ambientRects += `<rect width="${WIDTH}" height="${HEIGHT}" fill="url(#${id})"/>`;
+  });
+
+  // ── Gridlines ─────────────────────────────────────────────────────────────
   const gridStep = yMax / 5;
   let gridlinesSvg = '';
-  // Y=0 baseline: slightly brighter floor line to anchor the chart
-  const baselineY = yFor(0);
-  gridlinesSvg += `<line x1="${PADDING.left}" y1="${baselineY.toFixed(2)}" x2="${WIDTH - PADDING.right}" y2="${baselineY.toFixed(2)}" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>`;
+  const baselineY = padding.top + plotH;
+  gridlinesSvg += `<line x1="${padding.left}" y1="${baselineY.toFixed(2)}" x2="${WIDTH - padding.right}" y2="${baselineY.toFixed(2)}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
   for (let v = gridStep; v <= yMax; v += gridStep) {
     const y = yFor(v);
-    gridlinesSvg += `<line x1="${PADDING.left}" y1="${y.toFixed(2)}" x2="${WIDTH - PADDING.right}" y2="${y.toFixed(2)}" stroke="rgba(255,255,255,0.04)" stroke-width="1" stroke-dasharray="4,4"/>`;
-    gridlinesSvg += `<text x="${PADDING.left - 10}" y="${(y + 4).toFixed(2)}" fill="#4a4e5a" font-size="12" font-family="DejaVu Sans" text-anchor="end">${Math.round(v)}</text>`;
+    gridlinesSvg += `<line x1="${padding.left}" y1="${y.toFixed(2)}" x2="${WIDTH - padding.right}" y2="${y.toFixed(2)}" stroke="rgba(255,255,255,0.04)" stroke-width="1" stroke-dasharray="4,5"/>`;
+    gridlinesSvg += `<text x="${padding.left - 10}" y="${(y + 4).toFixed(2)}" fill="#3e4250" font-size="12" font-family="DejaVu Sans" text-anchor="end">${Math.round(v)}</text>`;
   }
 
-  // X-axis labels — thin out if too many to avoid overlap
+  // ── X-axis labels ─────────────────────────────────────────────────────────
   const maxLabels = 14;
   const labelStep = Math.max(1, Math.ceil(labels.length / maxLabels));
+  const xLabelY   = isOverlay ? HEIGHT - 28 : HEIGHT - 15;
   let xLabelsSvg = '';
   labels.forEach((label, i) => {
     if (i % labelStep !== 0 && i !== labels.length - 1) return;
-    xLabelsSvg += `<text x="${xFor(i).toFixed(2)}" y="${HEIGHT - 15}" fill="#4a4e5a" font-size="12" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(label)}</text>`;
+    xLabelsSvg += `<text x="${xFor(i).toFixed(2)}" y="${xLabelY}" fill="#3e4250" font-size="12" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(label)}</text>`;
   });
 
-  // Build each series: gradient def, fill path, line path
-  let defsSvg = '';
+  // ── Series: fills + lines ─────────────────────────────────────────────────
+  let defsSvg  = '';
   let fillsSvg = '';
   let linesSvg = '';
 
   series.forEach((s, idx) => {
-    const color = s.color || PALETTE[idx % PALETTE.length];
-    const rgb = hexToRgb(color);
-    const gradId = `grad${idx}`;
-    // Multi-series: lower fill opacity so overlapping series don't create mud.
-    // Gradient fades from 65% height (not 0%) so fill hugs the bottom rather
-    // than flooding the full chart area.
-    const topAlpha = isMulti ? 0.18 : 0.45;
+    const color    = s.color || PALETTE[idx % PALETTE.length];
+    const rgb      = hexToRgb(color);
+    const gradId   = `grad${idx}`;
+    const topAlpha = isMulti ? 0.16 : 0.40;
 
     defsSvg += `
       <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${topAlpha}"/>
-        <stop offset="65%"  stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${(topAlpha * 0.3).toFixed(3)}"/>
+        <stop offset="60%"  stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${(topAlpha * 0.25).toFixed(3)}"/>
         <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
       </linearGradient>`;
 
-    const points = s.data.map((v, i) => ({ x: xFor(i), y: yFor(v) }));
+    const points   = s.data.map((v, i) => ({ x: xFor(i), y: yFor(v) }));
     const linePath = smoothPath(points, padding.top + plotH, padding.top);
     const fillPath = `${linePath} L ${xFor(s.data.length - 1).toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${xFor(0).toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
 
@@ -150,43 +175,106 @@ async function buildLineChartImage(labels, series, title) {
     linesSvg += `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
   });
 
-  // Legend — line swatches (match actual chart lines), muted label text
+  // ── Legend ────────────────────────────────────────────────────────────────
   let legendSvg = '';
-  if (isMulti) {
-    let legendX = PADDING.left;
+  if (isMulti && !isOverlay) {
+    let legendX = padding.left;
     const legendY = title ? 56 : 24;
     series.forEach((s, idx) => {
-      const color = s.color || PALETTE[idx % PALETTE.length];
+      const color     = s.color || PALETTE[idx % PALETTE.length];
       const labelText = escapeXml(s.label);
-      const swatchW = 20;
-      const textW = labelText.length * 7.2 + 24;
       legendSvg += `
-        <line x1="${legendX}" y1="${legendY - 4}" x2="${legendX + swatchW}" y2="${legendY - 4}" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/>
-        <text x="${legendX + swatchW + 8}" y="${legendY}" fill="#8b8fa8" font-size="13" font-family="DejaVu Sans">${labelText}</text>`;
-      legendX += swatchW + 8 + textW;
+        <line x1="${legendX}" y1="${legendY - 4}" x2="${legendX + 18}" y2="${legendY - 4}" stroke="${color}" stroke-width="2" stroke-linecap="round"/>
+        <text x="${legendX + 26}" y="${legendY}" fill="#8b8fa8" font-size="13" font-family="DejaVu Sans">${labelText}</text>`;
+      legendX += 26 + labelText.length * 7.2 + 20;
+    });
+  } else if (isMulti && isOverlay) {
+    let legendX = padding.left;
+    const legendY = 68;
+    series.forEach((s, idx) => {
+      const color     = s.color || PALETTE[idx % PALETTE.length];
+      const labelText = escapeXml(s.label);
+      legendSvg += `
+        <line x1="${legendX}" y1="${legendY - 3}" x2="${legendX + 16}" y2="${legendY - 3}" stroke="${color}" stroke-width="2" stroke-linecap="round"/>
+        <text x="${legendX + 23}" y="${legendY}" fill="#6b6e7a" font-size="12" font-family="DejaVu Sans">${labelText}</text>`;
+      legendX += 23 + labelText.length * 6.8 + 18;
     });
   }
 
-  const titleSvg = title
+  const titleSvg = (!isOverlay && title)
     ? `<text x="30" y="32" fill="#e8e9eb" font-size="18" font-weight="bold" font-family="DejaVu Sans">${escapeXml(title)}</text>`
     : '';
 
+  // ── Floating overlay ──────────────────────────────────────────────────────
+  let overlaySvg = '';
+  if (isOverlay) {
+    const o           = overlayOpts;
+    const accentColor = o.accentColor ?? '#5865F2';
+    overlaySvg += `<rect width="${WIDTH}" height="3" fill="${accentColor}" opacity="0.9"/>`;
+    if (o.title) {
+      overlaySvg += `<text x="${padding.left}" y="32" fill="#e8e9eb" font-size="22" font-weight="bold" font-family="DejaVu Sans">${escapeXml(o.title)}</text>`;
+    }
+    if (o.subtitle) {
+      overlaySvg += `<text x="${padding.left}" y="52" fill="#4a4e5a" font-size="13" font-family="DejaVu Sans">${escapeXml(o.subtitle)}</text>`;
+    }
+    const PILL_W   = 158;
+    const PILL_H   = 58;
+    const PILL_GAP = 8;
+    const pills    = (o.stats ?? []).slice(0, 3);
+    const totalPW  = pills.length * PILL_W + Math.max(0, pills.length - 1) * PILL_GAP;
+    pills.forEach((s, i) => {
+      const px  = WIDTH - padding.right - totalPW + i * (PILL_W + PILL_GAP);
+      const py  = 14;
+      const col = s.color || '#5865F2';
+      overlaySvg += `
+        <rect x="${px}" y="${py}" width="${PILL_W}" height="${PILL_H}" rx="6"
+              fill="#0d0e10" fill-opacity="0.82" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+        <circle cx="${px + 14}" cy="${py + 18}" r="3.5" fill="${col}"/>
+        <text x="${px + 25}" y="${py + 22}" fill="#6b6e7a" font-size="9.5"
+              font-family="DejaVu Sans" letter-spacing="1.5">${escapeXml(s.label.toUpperCase())}</text>
+        <text x="${px + 12}" y="${py + 47}" fill="#e8e9eb" font-size="19" font-weight="bold"
+              font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
+    });
+    const footerY = HEIGHT - 22;
+    overlaySvg += `<line x1="${padding.left}" y1="${HEIGHT - 34}" x2="${WIDTH - padding.right}" y2="${HEIGHT - 34}" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>`;
+    if (o.lookback) {
+      overlaySvg += `<text x="${padding.left}" y="${footerY}" fill="#2e3040" font-size="11" font-family="DejaVu Sans">Lookback: ${escapeXml(o.lookback)} — UTC</text>`;
+    }
+    overlaySvg += `
+      <circle cx="${WIDTH - padding.right - 78}" cy="${footerY - 4}" r="3.5" fill="#5865F2"/>
+      <text x="${WIDTH - padding.right - 70}" y="${footerY}" fill="#2e3040" font-size="11" font-family="DejaVu Sans">PrimalGame</text>`;
+  }
+
+  const CORNER_R = 14;
   const svg = `
 <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
-  <defs>${defsSvg}</defs>
-  <rect width="${WIDTH}" height="${HEIGHT}" fill="#0f1012"/>
+  <defs>
+    ${ambientDefs}
+    ${defsSvg}
+  </defs>
+  <rect width="${WIDTH}" height="${HEIGHT}" fill="#0d0e10"/>
+  ${ambientRects}
   ${gridlinesSvg}
   ${fillsSvg}
   ${linesSvg}
   ${xLabelsSvg}
   ${titleSvg}
   ${legendSvg}
+  ${overlaySvg}
 </svg>`;
 
-  return sharp(Buffer.from(svg))
-    .png()
-    .toBuffer();
+  if (isOverlay) {
+    const flat = await sharp(Buffer.from(svg)).png().toBuffer();
+    const maskBuffer = await sharp(Buffer.from(`
+<svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${WIDTH}" height="${HEIGHT}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
+</svg>`)).png().toBuffer();
+    return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
+  }
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
 }
+
 
 // Bucket round_logs rows into per-day counts per map.
 // Unchanged from the QuickChart-era version — schema-compatible.
@@ -235,11 +323,12 @@ function bucketRoundsByMap(rows, startDate, endDate, bucketMs = 24 * 60 * 60 * 1
  * @param title      chart title
  * @returns Promise<Buffer> PNG image buffer
  */
-async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, title) {
-  const topPadding = 90;
-  const padding = { top: topPadding, right: 60, bottom: 50, left: 60 };
+async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, title, overlayOpts = null) {
+  const isOverlay     = overlayOpts !== null;
+  const bottomPadding = isOverlay ? 52 : 50;
+  const padding = { top: 90, right: 64, bottom: bottomPadding, left: 64 };
   const plotW = WIDTH - padding.left - padding.right;
-  const plotH = HEIGHT - padding.top - padding.bottom;
+  const plotH = HEIGHT - padding.top - bottomPadding;
 
   const leftMax = Math.ceil(Math.max(1, ...barData) / 10) * 10 || 10;
   const allLineValues = lineSeries.flatMap(s => s.data);
@@ -249,107 +338,174 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   function xFor(i) {
     return padding.left + (labels.length > 1 ? (i / (labels.length - 1)) * plotW : plotW / 2);
   }
-  function yForLeft(v) { return padding.top + plotH - (v / leftMax) * plotH; }
+  function yForLeft(v)  { return padding.top + plotH - (v / leftMax)  * plotH; }
   function yForRight(v) { return padding.top + plotH - (v / rightMax) * plotH; }
 
-  // Background bars (total volume, left axis)
-  // If bars and lines are on very different scales (ratio > 20×), cap bar
-  // height at 60% of plotH so bars don't overwhelm the line series.
-  // Otherwise use the full left axis scale (map popularity view).
+  // ── Ambient gradients ─────────────────────────────────────────────────────
+  const ambientColors = overlayOpts?.ambientColors ?? [];
+  const GRAD_R2 = 750;
+  const cornerCoords2 = {
+    tl: { cx: 0,     cy: 0      },
+    tr: { cx: WIDTH, cy: 0      },
+    bl: { cx: 0,     cy: HEIGHT },
+    br: { cx: WIDTH, cy: HEIGHT },
+  };
+  let ambientDefs2  = '';
+  let ambientRects2 = '';
+  ambientColors.forEach((c, i) => {
+    const id    = `ambDual${i}`;
+    const coord = cornerCoords2[c.corner] ?? { cx: 0, cy: 0 };
+    const rgb   = hexToRgb(c.color);
+    ambientDefs2 += `
+      <radialGradient id="${id}" gradientUnits="userSpaceOnUse"
+          cx="${coord.cx}" cy="${coord.cy}" r="${GRAD_R2}">
+        <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.22"/>
+        <stop offset="45%"  stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.07"/>
+        <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
+      </radialGradient>`;
+    ambientRects2 += `<rect width="${WIDTH}" height="${HEIGHT}" fill="url(#${id})"/>`;
+  });
+
+  // ── Background bars ───────────────────────────────────────────────────────
   const barWidth = (plotW / labels.length) * 0.6;
   let barsSvg = '';
   barData.forEach((v, i) => {
     const x = xFor(i) - barWidth / 2;
     const y = yForLeft(v);
     const h = (padding.top + plotH) - y;
-    barsSvg += `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${h.toFixed(2)}" fill="rgba(255,255,255,0.12)" rx="2"/>`;
+    barsSvg += `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${h.toFixed(2)}" fill="rgba(255,255,255,0.08)" rx="2"/>`;
   });
 
-  // Foreground line(s) — right axis, each with its own gradient fill.
-  // Lower fill opacity when multiple lines to avoid muddy overlap.
+  // ── Foreground lines ──────────────────────────────────────────────────────
   const isMultiLine = lineSeries.length > 1;
-  let defsSvg = '';
+  let defsSvg  = '';
   let fillsSvg = '';
   let linesSvg = '';
 
   lineSeries.forEach((s, idx) => {
-    const color = s.color || PALETTE[idx % PALETTE.length];
-    const rgb = hexToRgb(color);
-    const gradId = `dualGrad${idx}`;
-    const topAlpha = isMultiLine ? 0.18 : 0.42;
+    const color    = s.color || PALETTE[idx % PALETTE.length];
+    const rgb      = hexToRgb(color);
+    const gradId   = `dualGrad${idx}`;
+    const topAlpha = isMultiLine ? 0.16 : 0.40;
 
     defsSvg += `
       <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${topAlpha}"/>
-        <stop offset="65%"  stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${(topAlpha * 0.3).toFixed(3)}"/>
+        <stop offset="60%"  stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="${(topAlpha * 0.25).toFixed(3)}"/>
         <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
       </linearGradient>`;
 
-    const points = s.data.map((v, i) => ({ x: xFor(i), y: yForRight(v) }));
+    const points   = s.data.map((v, i) => ({ x: xFor(i), y: yForRight(v) }));
     const linePath = smoothPath(points, padding.top + plotH, padding.top);
     const fillPath = `${linePath} L ${xFor(s.data.length - 1).toFixed(2)} ${(padding.top + plotH).toFixed(2)} L ${xFor(0).toFixed(2)} ${(padding.top + plotH).toFixed(2)} Z`;
     fillsSvg += `<path d="${fillPath}" fill="url(#${gradId})"/>`;
     linesSvg += `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
   });
 
-  // Gridlines — dashed at low opacity, solid baseline at Y=0
-  const gridStep = rightMax / 5;
+  // ── Gridlines ─────────────────────────────────────────────────────────────
+  const gridStep  = rightMax / 5;
+  const dualBaseY = padding.top + plotH;
   let gridSvg = '';
-  const dualBaselineY = yForRight(0);
-  gridSvg += `<line x1="${padding.left}" y1="${dualBaselineY.toFixed(2)}" x2="${WIDTH - padding.right}" y2="${dualBaselineY.toFixed(2)}" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>`;
+  gridSvg += `<line x1="${padding.left}" y1="${dualBaseY.toFixed(2)}" x2="${WIDTH - padding.right}" y2="${dualBaseY.toFixed(2)}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
   for (let v = gridStep; v <= rightMax; v += gridStep) {
     const y = yForRight(v);
-    gridSvg += `<line x1="${padding.left}" y1="${y.toFixed(2)}" x2="${WIDTH - padding.right}" y2="${y.toFixed(2)}" stroke="rgba(255,255,255,0.04)" stroke-width="1" stroke-dasharray="4,4"/>`;
+    gridSvg += `<line x1="${padding.left}" y1="${y.toFixed(2)}" x2="${WIDTH - padding.right}" y2="${y.toFixed(2)}" stroke="rgba(255,255,255,0.04)" stroke-width="1" stroke-dasharray="4,5"/>`;
   }
 
-  // Left axis labels — muted
+  // ── Axis labels ───────────────────────────────────────────────────────────
   const leftStep = leftMax / 5;
   let leftAxisSvg = '';
   for (let v = 0; v <= leftMax; v += leftStep) {
     const y = yForLeft(v);
-    leftAxisSvg += `<text x="${padding.left - 10}" y="${(y + 4).toFixed(2)}" fill="#4a4e5a" font-size="12" font-family="DejaVu Sans" text-anchor="end">${Math.round(v)}</text>`;
+    leftAxisSvg += `<text x="${padding.left - 10}" y="${(y + 4).toFixed(2)}" fill="#3e4250" font-size="12" font-family="DejaVu Sans" text-anchor="end">${Math.round(v)}</text>`;
   }
-  // Right axis labels — muted
   let rightAxisSvg = '';
   for (let v = 0; v <= rightMax; v += gridStep) {
     const y = yForRight(v);
-    rightAxisSvg += `<text x="${WIDTH - padding.right + 8}" y="${(y + 4).toFixed(2)}" fill="#4a4e5a" font-size="11" font-family="DejaVu Sans" text-anchor="start">${Math.round(v)}</text>`;
+    rightAxisSvg += `<text x="${WIDTH - padding.right + 8}" y="${(y + 4).toFixed(2)}" fill="#3e4250" font-size="11" font-family="DejaVu Sans" text-anchor="start">${Math.round(v)}</text>`;
   }
 
-  // X-axis labels — thin out if too many
   const maxLabels = 14;
   const labelStep = Math.max(1, Math.ceil(labels.length / maxLabels));
+  const xLabelY2  = isOverlay ? HEIGHT - 28 : HEIGHT - 15;
   let xLabelsSvg = '';
   labels.forEach((label, i) => {
     if (i % labelStep !== 0 && i !== labels.length - 1) return;
-    xLabelsSvg += `<text x="${xFor(i).toFixed(2)}" y="${HEIGHT - 15}" fill="#4a4e5a" font-size="12" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(label)}</text>`;
+    xLabelsSvg += `<text x="${xFor(i).toFixed(2)}" y="${xLabelY2}" fill="#3e4250" font-size="12" font-family="DejaVu Sans" text-anchor="middle">${escapeXml(label)}</text>`;
   });
 
-  const titleSvg = title
+  // ── Legend ────────────────────────────────────────────────────────────────
+  const legendY      = isOverlay ? 68 : (title ? 56 : 24);
+  const barLabelText = escapeXml(barLabel);
+  const legendStartX = isOverlay ? padding.left : 48;
+  let legendX = legendStartX + barLabelText.length * 6.8 + 22;
+  const dotCX = isOverlay ? padding.left - 14 : 35;
+  let legendSvg = `
+    <circle cx="${dotCX}" cy="${legendY - 5}" r="3.5" fill="rgba(255,255,255,0.18)"/>
+    <text x="${legendStartX}" y="${legendY}" fill="${isOverlay ? '#6b6e7a' : '#8b8fa8'}" font-size="${isOverlay ? '12' : '13'}" font-family="DejaVu Sans">${barLabelText}</text>`;
+
+  lineSeries.forEach((s, idx) => {
+    const color     = s.color || PALETTE[idx % PALETTE.length];
+    const labelText = escapeXml(s.label);
+    legendSvg += `
+      <line x1="${legendX}" y1="${legendY - 3}" x2="${legendX + 16}" y2="${legendY - 3}" stroke="${color}" stroke-width="2" stroke-linecap="round"/>
+      <text x="${legendX + 22}" y="${legendY}" fill="${isOverlay ? '#6b6e7a' : '#8b8fa8'}" font-size="${isOverlay ? '12' : '13'}" font-family="DejaVu Sans">${labelText}</text>`;
+    legendX += 22 + labelText.length * 6.8 + 18;
+  });
+
+  const titleSvg = (!isOverlay && title)
     ? `<text x="30" y="32" fill="#e8e9eb" font-size="18" font-weight="bold" font-family="DejaVu Sans">${escapeXml(title)}</text>`
     : '';
 
-  // Legend below title: grey dot for bars, one colored swatch per line series
-  const legendY = title ? 56 : 24;
-  const barLabelText = escapeXml(barLabel);
-  let legendX = 48 + barLabelText.length * 7.5 + 30;
-  let legendSvg = `
-    <circle cx="35" cy="${legendY - 5}" r="4" fill="rgba(255,255,255,0.25)"/>
-    <text x="48" y="${legendY}" fill="#8b8fa8" font-size="13" font-family="DejaVu Sans">${barLabelText}</text>`;
+  // ── Overlay ───────────────────────────────────────────────────────────────
+  let overlaySvg2 = '';
+  if (isOverlay) {
+    const o           = overlayOpts;
+    const accentColor = o.accentColor ?? '#5865F2';
+    overlaySvg2 += `<rect width="${WIDTH}" height="3" fill="${accentColor}" opacity="0.9"/>`;
+    if (o.title) {
+      overlaySvg2 += `<text x="${padding.left}" y="32" fill="#e8e9eb" font-size="22" font-weight="bold" font-family="DejaVu Sans">${escapeXml(o.title)}</text>`;
+    }
+    if (o.subtitle) {
+      overlaySvg2 += `<text x="${padding.left}" y="52" fill="#4a4e5a" font-size="13" font-family="DejaVu Sans">${escapeXml(o.subtitle)}</text>`;
+    }
+    const PILL_W   = 158;
+    const PILL_H   = 58;
+    const PILL_GAP = 8;
+    const pills    = (o.stats ?? []).slice(0, 3);
+    const totalPW  = pills.length * PILL_W + Math.max(0, pills.length - 1) * PILL_GAP;
+    pills.forEach((s, i) => {
+      const px  = WIDTH - padding.right - totalPW + i * (PILL_W + PILL_GAP);
+      const py  = 14;
+      const col = s.color || '#5865F2';
+      overlaySvg2 += `
+        <rect x="${px}" y="${py}" width="${PILL_W}" height="${PILL_H}" rx="6"
+              fill="#0d0e10" fill-opacity="0.82" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+        <circle cx="${px + 14}" cy="${py + 18}" r="3.5" fill="${col}"/>
+        <text x="${px + 25}" y="${py + 22}" fill="#6b6e7a" font-size="9.5"
+              font-family="DejaVu Sans" letter-spacing="1.5">${escapeXml(s.label.toUpperCase())}</text>
+        <text x="${px + 12}" y="${py + 47}" fill="#e8e9eb" font-size="19" font-weight="bold"
+              font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
+    });
+    const footerY = HEIGHT - 22;
+    overlaySvg2 += `<line x1="${padding.left}" y1="${HEIGHT - 34}" x2="${WIDTH - padding.right}" y2="${HEIGHT - 34}" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>`;
+    if (o.lookback) {
+      overlaySvg2 += `<text x="${padding.left}" y="${footerY}" fill="#2e3040" font-size="11" font-family="DejaVu Sans">Lookback: ${escapeXml(o.lookback)} — UTC</text>`;
+    }
+    overlaySvg2 += `
+      <circle cx="${WIDTH - padding.right - 78}" cy="${footerY - 4}" r="3.5" fill="#5865F2"/>
+      <text x="${WIDTH - padding.right - 70}" y="${footerY}" fill="#2e3040" font-size="11" font-family="DejaVu Sans">PrimalGame</text>`;
+  }
 
-  lineSeries.forEach((s, idx) => {
-    const color = s.color || PALETTE[idx % PALETTE.length];
-    const labelText = escapeXml(s.label);
-    legendSvg += `
-      <line x1="${legendX}" y1="${legendY - 4}" x2="${legendX + 20}" y2="${legendY - 4}" stroke="${color}" stroke-width="2.5" stroke-linecap="round"/>
-      <text x="${legendX + 28}" y="${legendY}" fill="#8b8fa8" font-size="13" font-family="DejaVu Sans">${labelText}</text>`;
-    legendX += 28 + labelText.length * 7.2 + 24;
-  });
-
+  const CORNER_R2 = 14;
   const svg = `
 <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
-  <defs>${defsSvg}</defs>
-  <rect width="${WIDTH}" height="${HEIGHT}" fill="#0f1012"/>
+  <defs>
+    ${ambientDefs2}
+    ${defsSvg}
+  </defs>
+  <rect width="${WIDTH}" height="${HEIGHT}" fill="#0d0e10"/>
+  ${ambientRects2}
   ${gridSvg}
   ${barsSvg}
   ${fillsSvg}
@@ -359,10 +515,21 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   ${xLabelsSvg}
   ${titleSvg}
   ${legendSvg}
+  ${overlaySvg2}
 </svg>`;
+
+  if (isOverlay) {
+    const flat = await sharp(Buffer.from(svg)).png().toBuffer();
+    const maskBuffer = await sharp(Buffer.from(`
+<svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${WIDTH}" height="${HEIGHT}" rx="${CORNER_R2}" ry="${CORNER_R2}" fill="white"/>
+</svg>`)).png().toBuffer();
+    return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
+  }
 
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
+
 
 /**
  * Wrap a chart PNG buffer in a Statbot-style branded card.
@@ -2436,195 +2603,11 @@ async function buildWinRateCardV2({
 }
 
 // ─── buildMapChartCardV2 ─────────────────────────────────────────────────────
-// Card shell for /mapchart (Map Popularity and Win Rate Over Time).
-// Replaces the generic buildChartCard with a design that:
-//   • Uses map-color ambient radial gradients in the header zone — one per
-//     corner, each in that map's canonical color at low opacity, bleeding
-//     inward like atmospheric light. No photos needed; identity comes from color.
-//   • For Win Rate Over Time: single-color ambient from the left edge only,
-//     in the item's accent color, fading right — implies the data source.
-//   • Header: thin 3px top accent stripe, category label, bold title, stat boxes.
-//   • Chart area: dark base that sits under the composited chart buffer.
-//   • Footer: minimal, same as V2.
-//
-// @param chartBuffer  PNG from buildLineChartImage / buildDualAxisChartImage
-// @param opts
-//   title      {string}   card title
-//   subtitle   {string}   card subtitle
-//   stats      {Array}    up to 3 × { label, value, color? } — header stat boxes
-//   lookback   {string}   footer left text
-//   mode       {string}   'map_popularity' | 'win_rate'
-//   colors     {Array}    map-color objects: { color, corner } where corner is
-//                         'tl'|'tr'|'bl'|'br'. For win_rate pass 1–2 entries
-//                         with corner 'tl'|'bl' only.
-//   accentColor {string}  hex — top stripe color
-async function buildMapChartCardV2(chartBuffer, {
-  title       = '',
-  subtitle    = '',
-  stats       = [],
-  lookback    = '',
-  mode        = 'map_popularity',
-  colors      = [],
-  accentColor = '#5865F2',
-} = {}) {
-  const CARD_W   = 1200;
-  const HEADER_H = 90;
-  const FOOTER_H = 40;
-  const CORNER_R = 14;
-  const ACCENT_H = 3;
-  const PAD      = 20;
-
-  const { height: CHART_H } = await sharp(chartBuffer).metadata();
-  const CARD_H   = HEADER_H + CHART_H + FOOTER_H;
-  const FOOTER_Y = HEADER_H + CHART_H;
-
-  // ── Ambient radial gradients (header zone only — chart sits on top) ───────
-  // Each entry in colors = { color: '#hex', corner: 'tl'|'tr'|'bl'|'br' }
-  // Orbs are placed at card corners, radius ~680px so they bleed well inward.
-  // Opacity 9% at center → 0% at edge: vivid enough to read, dim enough to
-  // never compete with chart data or text.
-  const GRAD_R = 900;
-  const cornerCoords = {
-    tl: { cx: 0,       cy: 0       },
-    tr: { cx: CARD_W,  cy: 0       },
-    bl: { cx: 0,       cy: CARD_H  },
-    br: { cx: CARD_W,  cy: CARD_H  },
-  };
-
-  let gradDefs = '';
-  let gradRects = '';
-  colors.forEach((c, i) => {
-    const id    = `mapGrad${i}`;
-    const coord = cornerCoords[c.corner] ?? { cx: 0, cy: 0 };
-    const rgb   = hexToRgb(c.color);
-    gradDefs += `
-      <radialGradient id="${id}" gradientUnits="userSpaceOnUse"
-          cx="${coord.cx}" cy="${coord.cy}" r="${GRAD_R}">
-        <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.17"/>
-        <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
-      </radialGradient>`;
-    // Apply gradient as a full-card rect — only visible in header/footer zones
-    // since the chart PNG composited on top covers the chart zone fully.
-    gradRects += `<rect width="${CARD_W}" height="${CARD_H}" fill="url(#${id})"/>`;
-  });
-
-  // ── Icon ──────────────────────────────────────────────────────────────────
-  const ICON_SZ = 28;
-  let iconBuffer = null;
-  try {
-    const raw  = await sharp(path.join(__dirname, 'assets', 'icon.png'))
-      .resize(ICON_SZ, ICON_SZ, { fit: 'cover' })
-      .png()
-      .toBuffer();
-    const mask = await sharp(Buffer.from(
-      `<svg width="${ICON_SZ}" height="${ICON_SZ}" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="${ICON_SZ / 2}" cy="${ICON_SZ / 2}" r="${ICON_SZ / 2}" fill="white"/>
-      </svg>`
-    )).png().toBuffer();
-    iconBuffer = await sharp(raw)
-      .composite([{ input: mask, blend: 'dest-in' }])
-      .png()
-      .toBuffer();
-  } catch (_) {}
-
-  const TEXT_X = iconBuffer ? PAD + ICON_SZ + 12 : PAD;
-
-  // ── Stat boxes (right side of header, V2 style) ───────────────────────────
-  const BOX_W   = 160;
-  const BOX_H   = 62;
-  const BOX_GAP = 10;
-  const BOX_Y   = Math.round((HEADER_H - BOX_H) / 2);
-  const capped  = stats.slice(0, 3);
-  const totalBW = capped.length * BOX_W + Math.max(0, capped.length - 1) * BOX_GAP;
-  let statBoxesSvg = '';
-  capped.forEach((s, i) => {
-    const bx  = CARD_W - PAD - totalBW + i * (BOX_W + BOX_GAP);
-    const col = s.color || '#5865F2';
-    statBoxesSvg += `
-      <rect x="${bx}" y="${BOX_Y}" width="${BOX_W}" height="${BOX_H}" rx="6" fill="#111214"
-            stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-      <circle cx="${bx + 16}" cy="${BOX_Y + 20}" r="4" fill="${col}"/>
-      <text x="${bx + 28}" y="${BOX_Y + 25}" fill="#7e8294" font-size="10"
-            font-family="DejaVu Sans" letter-spacing="1.5">${escapeXml(s.label.toUpperCase())}</text>
-      <text x="${bx + 14}" y="${BOX_Y + 52}" fill="#e8e9eb" font-size="20" font-weight="bold"
-            font-family="DejaVu Sans">${escapeXml(String(s.value))}</text>`;
-  });
-
-  // ── Header text ───────────────────────────────────────────────────────────
-  const titleEl = title
-    ? `<text x="${TEXT_X}" y="${ACCENT_H + 44}" fill="#e8e9eb" font-size="22" font-weight="bold"
-             font-family="DejaVu Sans">${escapeXml(title)}</text>`
-    : '';
-  const subtitleEl = subtitle
-    ? `<text x="${TEXT_X}" y="${ACCENT_H + 66}" fill="#5a5e6e" font-size="13"
-             font-family="DejaVu Sans">${escapeXml(subtitle)}</text>`
-    : '';
-
-  // ── Footer ────────────────────────────────────────────────────────────────
-  const ftY        = FOOTER_Y + 26;
-  const footerLeft = lookback
-    ? `<text x="${PAD}" y="${ftY}" fill="#72767d" font-size="13"
-             font-family="DejaVu Sans">Lookback: ${escapeXml(lookback)} — UTC</text>`
-    : '';
-  const footerRight = `
-    <circle cx="${CARD_W - 98}" cy="${FOOTER_Y + 20}" r="4.5" fill="#5865F2"/>
-    <text x="${CARD_W - 88}" y="${ftY}" fill="#72767d" font-size="13"
-          font-family="DejaVu Sans">PrimalGame</text>`;
-
-  // ── Card SVG ──────────────────────────────────────────────────────────────
-  const cardSvg = `
-<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
-  <defs>${gradDefs}</defs>
-
-  <!-- Base: near-black -->
-  <rect width="${CARD_W}" height="${CARD_H}" fill="#0f1012"/>
-
-  <!-- Ambient color bleed from corners -->
-  ${gradRects}
-
-  <!-- Header surface — very subtle elevation, not opaque so gradient shows -->
-  <rect width="${CARD_W}" height="${HEADER_H}" fill="rgba(255,255,255,0.025)"/>
-
-  <!-- Top accent stripe -->
-  <rect width="${CARD_W}" height="${ACCENT_H}" fill="${accentColor}" opacity="0.85"/>
-
-  <!-- Divider between header and chart -->
-  <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}"
-        stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
-
-  <!-- Chart zone background — chart PNG composites on top of this -->
-  <rect y="${HEADER_H}" width="${CARD_W}" height="${CHART_H}" fill="#12141700"/>
-
-  <!-- Footer -->
-  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="rgba(0,0,0,0.35)"/>
-  <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}"
-        stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
-
-  ${statBoxesSvg}
-  ${titleEl}
-  ${subtitleEl}
-  ${footerLeft}
-  ${footerRight}
-</svg>`;
-
-  // ── Composite: card → chart → icon → rounded mask ─────────────────────────
-  const composites = [{ input: chartBuffer, top: HEADER_H, left: 0 }];
-  if (iconBuffer) composites.push({ input: iconBuffer, top: 18, left: PAD });
-
-  const flat = await sharp(Buffer.from(cardSvg))
-    .composite(composites)
-    .png()
-    .toBuffer();
-
-  const maskBuffer = await sharp(Buffer.from(`
-<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
-  <rect width="${CARD_W}" height="${CARD_H}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
-</svg>`)).png().toBuffer();
-
-  return sharp(flat)
-    .composite([{ input: maskBuffer, blend: 'dest-in' }])
-    .png()
-    .toBuffer();
+// Now a pass-through. The actual full-bleed card is rendered inside
+// buildLineChartImage / buildDualAxisChartImage when called with overlayOpts.
+// mapchart.js calls those directly and passes the result here — we return it.
+async function buildMapChartCardV2(chartBuffer, _opts = {}) {
+  return chartBuffer;
 }
 
 module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, buildWinRateCard, buildWinRateCardV2, buildMapChartCardV2, buildBalanceReportCard, buildGameStatsOverviewCard, bucketRoundsByMap, PALETTE, MAP_COLORS };

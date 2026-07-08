@@ -6,7 +6,7 @@ const {
   ButtonStyle,
   StringSelectMenuBuilder,
 } = require('discord.js');
-const { buildLineChartImage, buildDualAxisChartImage, buildMapChartCardV2, bucketRoundsByMap, MAP_COLORS } = require('../modules/chart');
+const { buildLineChartImage, buildDualAxisChartImage, bucketRoundsByMap, MAP_COLORS } = require('../modules/chart');
 
 // ─── /mapchart ───────────────────────────────────────────────────────────
 // Two chart types, switchable via dropdown:
@@ -262,49 +262,59 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
 
   const baselineRows = await getSixMonthBaseline(supabase);
 
-  let chartBuffer;
+  let buffer;
   let mapsShown;
   let cardTitle;
+  const CORNER_ORDER = ['tl', 'tr', 'bl', 'br'];
+
   if (mapFilter) {
     const mapSeries = series.find(s => s.label.toLowerCase() === mapFilter.toLowerCase());
     if (!mapSeries) return interaction.editReply(`No data found for map "${mapFilter}".`);
 
     mapsShown = [mapSeries.label];
-    chartBuffer = await buildLineChartImage(
-      labels,
-      [{ label: mapSeries.label, data: mapSeries.data, color: MAP_COLORS[mapSeries.label] }],
-      null
-    );
     cardTitle = `${mapSeries.label} — Round Count`;
+    const accentColor = MAP_COLORS[mapSeries.label] ?? '#5865F2';
+
+    buffer = await buildLineChartImage(
+      labels,
+      [{ label: mapSeries.label, data: mapSeries.data, color: accentColor }],
+      null,
+      {
+        title:         cardTitle,
+        subtitle:      `Primal Pursuit · Past ${days} Days`,
+        stats:         [{ label: 'Total Rounds', value: rows.length.toLocaleString(), color: '#5865F2' }],
+        lookback:      `Past ${days} Days`,
+        accentColor,
+        ambientColors: [{ color: accentColor, corner: 'tl' }, { color: accentColor, corner: 'bl' }],
+      }
+    );
   } else {
     mapsShown = series.map(s => s.label);
-    const coloredSeries = series.map(s => ({ ...s, color: MAP_COLORS[s.label] ?? s.color }));
-    chartBuffer = await buildLineChartImage(labels, coloredSeries, null);
+    const coloredSeries   = series.map(s => ({ ...s, color: MAP_COLORS[s.label] ?? s.color }));
+    const dominantAccent  = MAP_COLORS[mapsShown[0]] ?? '#5865F2';
+    const mapCornerColors = mapsShown.slice(0, 4).map((map, i) => ({
+      color:  MAP_COLORS[map] ?? '#5865F2',
+      corner: CORNER_ORDER[i],
+    }));
     cardTitle = 'Map Popularity';
+
+    buffer = await buildLineChartImage(
+      labels,
+      coloredSeries,
+      null,
+      {
+        title:         cardTitle,
+        subtitle:      `Primal Pursuit · Past ${days} Days`,
+        stats: [
+          { label: 'Total Rounds', value: rows.length.toLocaleString(), color: '#5865F2' },
+          { label: 'Maps',         value: mapsShown.length.toString(),  color: '#57F287' },
+        ],
+        lookback:      `Past ${days} Days`,
+        accentColor:   dominantAccent,
+        ambientColors: mapCornerColors,
+      }
+    );
   }
-
-  // Build corner colors: assign each map a corner in display order
-  const CORNER_ORDER = ['tl', 'tr', 'bl', 'br'];
-  const mapCornerColors = mapsShown.slice(0, 4).map((map, i) => ({
-    color:  MAP_COLORS[map] ?? '#5865F2',
-    corner: CORNER_ORDER[i],
-  }));
-  // Dominant map (most rounds) drives the accent stripe
-  const dominantMap   = mapsShown[0] ?? null;
-  const dominantAccent = dominantMap ? (MAP_COLORS[dominantMap] ?? '#5865F2') : '#5865F2';
-
-  const buffer = await buildMapChartCardV2(chartBuffer, {
-    title:       cardTitle,
-    subtitle:    `Primal Pursuit · Past ${days} Days`,
-    stats: [
-      { label: 'Total Rounds', value: rows.length.toLocaleString(), color: '#5865F2' },
-      { label: 'Maps',         value: mapsShown.length.toString(),  color: '#57F287' },
-    ],
-    lookback:    `Past ${days} Days`,
-    mode:        'map_popularity',
-    colors:      mapCornerColors,
-    accentColor: dominantAccent,
-  });
 
   const narrative = buildChartNarrative(rows, baselineRows, mapsShown);
   const attachment = new AttachmentBuilder(buffer, { name: 'mapchart.png' });
@@ -359,31 +369,27 @@ async function renderWinRateOverTime(interaction, supabase, category, item, days
   const catLabel = category === 'vehicle' ? 'Vehicle' : 'Weapon';
   const lineColor = category === 'vehicle' ? '#5865F2' : '#ED4245';
 
-  const chartBuffer = await buildDualAxisChartImage(
+  const buffer = await buildDualAxisChartImage(
     labels,
     totalByDay,
     'Total Rounds (All)',
     [{ label: `${item} Surv. Win %`, data: winRateData, color: lineColor }],
     null,
-    true
+    {
+      title:         `${item} — Win Rate Over Time`,
+      subtitle:      `Primal Pursuit · ${catLabel} · Past ${days} Days`,
+      stats: [
+        { label: 'MVP Rounds',   value: itemRows.length.toLocaleString(),        color: lineColor  },
+        { label: 'Total Rounds', value: (allRows?.length ?? 0).toLocaleString(), color: '#5865F2' },
+      ],
+      lookback:      `Past ${days} Days`,
+      accentColor:   lineColor,
+      ambientColors: [
+        { color: lineColor, corner: 'tl' },
+        { color: lineColor, corner: 'bl' },
+      ],
+    }
   );
-
-  // Win rate over time: ambient color bleeds from left edge only in item color
-  const buffer = await buildMapChartCardV2(chartBuffer, {
-    title:    `${item} — Win Rate Over Time`,
-    subtitle: `Primal Pursuit · ${catLabel} · Past ${days} Days`,
-    stats: [
-      { label: 'MVP Rounds',   value: itemRows.length.toLocaleString(),        color: lineColor  },
-      { label: 'Total Rounds', value: (allRows?.length ?? 0).toLocaleString(), color: '#5865F2' },
-    ],
-    lookback:    `Past ${days} Days`,
-    mode:        'win_rate',
-    colors:      [
-      { color: lineColor, corner: 'tl' },
-      { color: lineColor, corner: 'bl' },
-    ],
-    accentColor: lineColor,
-  });
 
   const attachment = new AttachmentBuilder(buffer, { name: 'winratechart.png' });
   return interaction.editReply({
