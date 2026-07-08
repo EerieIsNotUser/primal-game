@@ -103,30 +103,17 @@ async function buildLineChartImage(labels, series, title, overlayOpts = null) {
     return padding.top + plotH - (v / yMax) * plotH;
   }
 
-  // ── Ambient corner gradients ──────────────────────────────────────────────
-  const ambientColors = overlayOpts?.ambientColors ?? [];
-  const GRAD_R = 750;
-  const cornerCoords = {
-    tl: { cx: 0,     cy: 0      },
-    tr: { cx: WIDTH, cy: 0      },
-    bl: { cx: 0,     cy: HEIGHT },
-    br: { cx: WIDTH, cy: HEIGHT },
-  };
-  let ambientDefs = '';
-  let ambientRects = '';
-  ambientColors.forEach((c, i) => {
-    const id    = `ambLine${i}`;
-    const coord = cornerCoords[c.corner] ?? { cx: 0, cy: 0 };
-    const rgb   = hexToRgb(c.color);
-    ambientDefs += `
-      <radialGradient id="${id}" gradientUnits="userSpaceOnUse"
-          cx="${coord.cx}" cy="${coord.cy}" r="${GRAD_R}">
-        <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.22"/>
-        <stop offset="45%"  stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.07"/>
-        <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
-      </radialGradient>`;
-    ambientRects += `<rect width="${WIDTH}" height="${HEIGHT}" fill="url(#${id})"/>`;
-  });
+  // ── Subtle atmospheric background gradient ────────────────────────────────
+  // Single diagonal linear gradient — near-black to slightly cooler near-black.
+  // Gives the chart depth without competing with the data colors.
+  // The per-map ambientColors param is intentionally ignored here; map identity
+  // comes from the line/fill colors, not the background.
+  const ambientDefs  = `
+    <linearGradient id="atmGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#111420" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#0a0b0d" stop-opacity="1"/>
+    </linearGradient>`;
+  const ambientRects = `<rect width="${WIDTH}" height="${HEIGHT}" fill="url(#atmGrad)"/>`;
 
   // ── Gridlines ─────────────────────────────────────────────────────────────
   const gridStep = yMax / 5;
@@ -252,7 +239,7 @@ async function buildLineChartImage(labels, series, title, overlayOpts = null) {
     ${ambientDefs}
     ${defsSvg}
   </defs>
-  <rect width="${WIDTH}" height="${HEIGHT}" fill="#0d0e10"/>
+  <rect width="${WIDTH}" height="${HEIGHT}" fill="#0a0b0d"/>
   ${ambientRects}
   ${gridlinesSvg}
   ${fillsSvg}
@@ -341,30 +328,13 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
   function yForLeft(v)  { return padding.top + plotH - (v / leftMax)  * plotH; }
   function yForRight(v) { return padding.top + plotH - (v / rightMax) * plotH; }
 
-  // ── Ambient gradients ─────────────────────────────────────────────────────
-  const ambientColors = overlayOpts?.ambientColors ?? [];
-  const GRAD_R2 = 750;
-  const cornerCoords2 = {
-    tl: { cx: 0,     cy: 0      },
-    tr: { cx: WIDTH, cy: 0      },
-    bl: { cx: 0,     cy: HEIGHT },
-    br: { cx: WIDTH, cy: HEIGHT },
-  };
-  let ambientDefs2  = '';
-  let ambientRects2 = '';
-  ambientColors.forEach((c, i) => {
-    const id    = `ambDual${i}`;
-    const coord = cornerCoords2[c.corner] ?? { cx: 0, cy: 0 };
-    const rgb   = hexToRgb(c.color);
-    ambientDefs2 += `
-      <radialGradient id="${id}" gradientUnits="userSpaceOnUse"
-          cx="${coord.cx}" cy="${coord.cy}" r="${GRAD_R2}">
-        <stop offset="0%"   stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.22"/>
-        <stop offset="45%"  stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0.07"/>
-        <stop offset="100%" stop-color="rgb(${rgb.r},${rgb.g},${rgb.b})" stop-opacity="0"/>
-      </radialGradient>`;
-    ambientRects2 += `<rect width="${WIDTH}" height="${HEIGHT}" fill="url(#${id})"/>`;
-  });
+  // ── Subtle atmospheric background gradient ────────────────────────────────
+  const ambientDefs2  = `
+    <linearGradient id="atmGrad2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#111420" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#0a0b0d" stop-opacity="1"/>
+    </linearGradient>`;
+  const ambientRects2 = `<rect width="${WIDTH}" height="${HEIGHT}" fill="url(#atmGrad2)"/>`;
 
   // ── Background bars ───────────────────────────────────────────────────────
   const barWidth = (plotW / labels.length) * 0.6;
@@ -504,7 +474,7 @@ async function buildDualAxisChartImage(labels, barData, barLabel, lineSeries, ti
     ${ambientDefs2}
     ${defsSvg}
   </defs>
-  <rect width="${WIDTH}" height="${HEIGHT}" fill="#0d0e10"/>
+  <rect width="${WIDTH}" height="${HEIGHT}" fill="#0a0b0d"/>
   ${ambientRects2}
   ${gridSvg}
   ${barsSvg}
