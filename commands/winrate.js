@@ -409,8 +409,8 @@ module.exports = {
     const dinoWins     = rows.length - survivorWins;
 
     // For dinos: flip the card so DinoWin is the "good" side (left, green)
-    const cardSurvivorWins = isDino ? dinoWins     : survivorWins;
-    const cardDinoWins     = isDino ? survivorWins : dinoWins;
+    const cardSurvivorWins = survivorWins;
+    const cardDinoWins     = dinoWins;
 
     const resolvedCategory = category === 'dino' ? 'dino' : category;
 
