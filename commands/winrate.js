@@ -316,30 +316,10 @@ module.exports = {
 
     const isDino = category === 'dino';
 
-    function getLevelWeight(level) {
-      if (level == null) return 1;
-      if (level >= 251) return 2;
-      if (level >= 101) return 1.5;
-      if (level >= 41)  return 1;
-      return 0.5;
-    }
-
-    let winRate;
-    if (lobby === '16060525458') {
-      // Pro lobbies — weighted by level so higher-level rounds count more
-      let weightedWins = 0, weightedTotal = 0;
-      for (const r of rows) {
-        const w = getLevelWeight(r.average_level);
-        weightedTotal += w;
-        const isWin = isDino ? r.round_result === 'DinoWin' : r.round_result === 'SurvivorWin';
-        if (isWin) weightedWins += w;
-      }
-      winRate = weightedTotal > 0 ? weightedWins / weightedTotal : 0;
-    } else {
-      winRate = isDino
-        ? rows.filter(r => r.round_result === 'DinoWin').length / rows.length
-        : computeWinRate(rows);
-    }
+    const winResultType2 = isDino ? 'DinoWin' : 'SurvivorWin';
+    const winRate = rows.length > 0
+      ? rows.filter(r => r.round_result === winResultType2).length / rows.length
+      : 0;
     const winRatePct = Math.round(winRate * 100);
 
     const lobbyLabel = lobby === '12076775711'     ? ' · Main Game'
@@ -422,7 +402,7 @@ module.exports = {
       const brRows  = rows.filter(r => r.average_level != null && r.average_level >= br.min && r.average_level <= br.max);
       const sWins   = brRows.filter(r => r.round_result === 'SurvivorWin').length;
       return { label: br.label, total: brRows.length, survivorPct: brRows.length > 0 ? Math.round((sWins / brRows.length) * 100) : 0 };
-    }).filter(br => br.total >= 3);
+    }).filter(br => br.total >= 50);
 
     // ── Win rate card ─────────────────────────────────────────────────────
     const survivorWins = rows.filter(r => r.round_result === 'SurvivorWin').length;
@@ -446,12 +426,13 @@ module.exports = {
     };
 
     const cardBuffer = await buildWinRateCardV2({
-      itemName:      item,
-      category:      resolvedCategory,
-      lookback:      periodLabel,
-      rounds:        rows.length,
-      survivorWins:  cardSurvivorWins,
-      dinoWins:      cardDinoWins,
+      itemName:        item,
+      category:        resolvedCategory,
+      lookback:        periodLabel,
+      rounds:          rows.length,
+      survivorWins:    cardSurvivorWins,
+      dinoWins:        cardDinoWins,
+      overrideDinoPct: lobby === '16060525458' ? (isDino ? winRatePct : 100 - winRatePct) : null,
       bestMap,
       coItem:        coItemEntry ? { name: coItemEntry[0], count: coItemEntry[1] } : null,
       baseline:      baseline && baseline.total >= 5 ? { rate: baseline.wins / baseline.total, rounds: baseline.total } : null,
