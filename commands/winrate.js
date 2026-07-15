@@ -102,7 +102,10 @@ function parseDateRange(text) {
 }
 
 async function queryWinRate(supabase, { category, item, gameMode, lobby, days, dateRange }) {
-  let query = supabase.from('round_logs').select('*');
+  // Use a targeted select with only needed columns to reduce data transfer
+  let query = supabase.from('round_logs').select(
+    'played_at, map, round_result, game_mode, average_level, mvp_equipped_vehicle, mvp_equipped_weapon, mvp_damage, dinosaurs_used'
+  );
 
   if (lobby) {
     query = query.eq('place_id', lobby);
@@ -130,7 +133,10 @@ async function queryWinRate(supabase, { category, item, gameMode, lobby, days, d
   }
 
   const { data, error } = await query.order('played_at', { ascending: true }).limit(100000);
-  if (error) return null;
+  if (error) {
+    console.error('[winrate:query]', error.message);
+    return null;
+  }
   return data ?? [];
 }
 
