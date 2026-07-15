@@ -64,13 +64,16 @@ async function fetchRounds(supabase, { days, gameMode }) {
     if (error) throw new Error(error.message);
 
     // Expand aggregate rows into synthetic rows for reuse in rendering logic
-    const rows = [];
+    const mapTotals = new Map();
     for (const agg of (data ?? [])) {
-      // Filter training lobby via place_ids jsonb if available
-      for (let i = 0; i < (agg.dino_wins ?? 0);     i++) rows.push({ map: agg.map, round_result: 'DinoWin',     game_mode: agg.game_mode });
-      for (let i = 0; i < (agg.survivor_wins ?? 0); i++) rows.push({ map: agg.map, round_result: 'SurvivorWin', game_mode: agg.game_mode });
+      if (!agg.map) continue;
+      const existing = mapTotals.get(agg.map) ?? { dinoWins: 0, survivorWins: 0, total: 0 };
+      existing.dinoWins     += agg.dino_wins     ?? 0;
+      existing.survivorWins += agg.survivor_wins ?? 0;
+      existing.total        += agg.total_rounds  ?? 0;
+      mapTotals.set(agg.map, existing);
     }
-    return { rows, source: 'aggregate' };
+    return { rows: null, mapTotals, source: 'aggregate' };
   }
 }
 
@@ -79,26 +82,33 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode, days
 
   let rows;
   try {
-    ({ rows } = await fetchRounds(supabase, { days, gameMode }));
+    ({ rows, mapTotals, source } = await fetchRounds(supabase, { days, gameMode }));
   } catch (err) {
     console.error('[piechart]', err.message);
     return interaction.editReply(`❌ Query failed: ${err.message}`);
   }
 
-  if (!rows || rows.length === 0) {
-    return interaction.editReply(`No round data found for the past ${days} days.`);
-  }
+  const isEmpty = source === 'aggregate' ? !mapTotals || mapTotals.size === 0 : !rows || rows.length === 0;
+  if (isEmpty) return interaction.editReply(`No round data found for the past ${days} days.`);
 
   let segments, cardTitle, cardStats;
 
   if (mapFilter) {
-    const mapRows = rows.filter(r => r.map === mapFilter);
-    if (mapRows.length === 0) {
-      return interaction.editReply(`No data found for **${mapFilter}** in the past ${days} days.`);
-    }
+    let dinoWins, survivorWins, totalRounds;
 
-    const dinoWins     = mapRows.filter(r => r.round_result === 'DinoWin').length;
-    const survivorWins = mapRows.filter(r => r.round_result === 'SurvivorWin').length;
+    if (source === 'aggregate') {
+      const t    = mapTotals.get(mapFilter);
+      if (!t) return interaction.editReply(`No data found for **${mapFilter}** in the past ${days} days.`);
+      dinoWins     = t.dinoWins;
+      survivorWins = t.survivorWins;
+      totalRounds  = t.total;
+    } else {
+      const mapRows = rows.filter(r => r.map === mapFilter);
+      if (mapRows.length === 0) return interaction.editReply(`No data found for **${mapFilter}** in the past ${days} days.`);
+      dinoWins     = mapRows.filter(r => r.round_result === 'DinoWin').length;
+      survivorWins = mapRows.filter(r => r.round_result === 'SurvivorWin').length;
+      totalRounds  = mapRows.length;
+    }
 
     segments  = [
       { label: 'Dino Win',     value: dinoWins,    color: '#ED4245' },
@@ -106,9 +116,9 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode, days
     ];
     cardTitle = `${mapFilter} — Win Rate`;
     cardStats = [
-      { label: 'Total Rounds', value: mapRows.length.toLocaleString(), color: '#5865F2' },
-      { label: 'Dino Wins',    value: dinoWins.toLocaleString(),       color: '#ED4245' },
-      { label: 'Surv. Wins',   value: survivorWins.toLocaleString(),   color: '#57F287' },
+      { label: 'Total Rounds', value: totalRounds.toLocaleString(), color: '#5865F2' },
+      { label: 'Dino Wins',    value: dinoWins.toLocaleString(),    color: '#ED4245' },
+      { label: 'Surv. Wins',   value: survivorWins.toLocaleString(), color: '#57F287' },
     ];
 
     const buffer = await buildPieCard({
@@ -117,7 +127,7 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode, days
       stats:       cardStats,
       lookback:    `Past ${days} Days`,
       segments,
-      centerLabel: `${mapRows.length.toLocaleString()}\nrounds`,
+      centerLabel: `${totalRounds.toLocaleString()}\nrounds`,
     });
 
     return interaction.editReply({
@@ -126,10 +136,18 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode, days
     });
 
   } else {
-    const mapCounts = new Map();
-    for (const row of rows) {
-      if (!row.map) continue;
-      mapCounts.set(row.map, (mapCounts.get(row.map) || 0) + 1);
+    let mapCounts, totalRounds;
+
+    if (source === 'aggregate') {
+      mapCounts   = new Map([...mapTotals.entries()].map(([map, t]) => [map, t.total]));
+      totalRounds = [...mapTotals.values()].reduce((s, t) => s + t.total, 0);
+    } else {
+      mapCounts   = new Map();
+      for (const row of rows) {
+        if (!row.map) continue;
+        mapCounts.set(row.map, (mapCounts.get(row.map) || 0) + 1);
+      }
+      totalRounds = rows.length;
     }
 
     segments = [...mapCounts.entries()]
@@ -140,8 +158,8 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode, days
 
     cardTitle = 'Map Distribution';
     cardStats = [
-      { label: 'Total Rounds', value: rows.length.toLocaleString(), color: '#5865F2' },
-      { label: 'Maps',         value: segments.length.toString(),    color: '#57F287' },
+      { label: 'Total Rounds', value: totalRounds.toLocaleString(), color: '#5865F2' },
+      { label: 'Maps',         value: segments.length.toString(),   color: '#57F287' },
     ];
 
     const buffer = await buildPieCard({
@@ -150,7 +168,7 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode, days
       stats:       cardStats,
       lookback:    `Past ${days} Days`,
       segments,
-      centerLabel: `${rows.length.toLocaleString()}\nrounds`,
+      centerLabel: `${totalRounds.toLocaleString()}\nrounds`,
     });
 
     return interaction.editReply({
