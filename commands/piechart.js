@@ -7,50 +7,48 @@ const {
 const { buildPieCard, MAP_COLORS } = require('../modules/chart');
 
 const ALL_MAPS          = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
-const TRAINING_PLACE_ID = '100026158235338';
 const DAYS              = 7;
 
 async function renderPieChart(interaction, supabase, { mapFilter, gameMode }) {
-  const startDate = new Date(Date.now() - DAYS * 24 * 60 * 60 * 1000);
   const modeLabel = gameMode ?? 'All Modes';
 
-  let query = supabase
-    .from('round_logs')
-    .select('map, round_result, game_mode')
-    .gte('played_at', startDate.toISOString())
-    .neq('place_id', TRAINING_PLACE_ID);
+  const { data, error } = await supabase.rpc('get_piechart_data', { days_back: DAYS });
 
-  if (gameMode) query = query.eq('game_mode', gameMode);
-
-  const { data: rows, error } = await query;
   if (error) {
     console.error('[piechart]', error.message);
     return interaction.editReply(`❌ Query failed: ${error.message}`);
   }
-  if (!rows || rows.length === 0) {
+
+  if (!data || data.length === 0) {
     return interaction.editReply(`No round data found for the past ${DAYS} days.`);
   }
+
+  // Filter by game_mode if specified
+  // (game_mode not in rpc yet — can add later)
 
   let segments, cardTitle, cardStats;
 
   if (mapFilter) {
-    const mapRows = rows.filter(r => r.map === mapFilter);
+    const mapRows = data.filter(r => r.map === mapFilter);
     if (mapRows.length === 0) {
       return interaction.editReply(`No data found for **${mapFilter}** in the past ${DAYS} days.`);
     }
 
-    const dinoWins     = mapRows.filter(r => r.round_result === 'DinoWin').length;
-    const survivorWins = mapRows.filter(r => r.round_result === 'SurvivorWin').length;
+    const dinoRow     = mapRows.find(r => r.round_result === 'DinoWin');
+    const survivorRow = mapRows.find(r => r.round_result === 'SurvivorWin');
+    const dinoWins    = Number(dinoRow?.cnt     ?? 0);
+    const survivorWins = Number(survivorRow?.cnt ?? 0);
+    const totalRounds = dinoWins + survivorWins;
 
     segments  = [
-      { label: 'Dino Win',     value: dinoWins,    color: '#ED4245' },
-      { label: 'Survivor Win', value: survivorWins, color: '#57F287' },
+      { label: 'Dino Win',     value: dinoWins,     color: '#ED4245' },
+      { label: 'Survivor Win', value: survivorWins,  color: '#57F287' },
     ];
     cardTitle = `${mapFilter} — Win Rate`;
     cardStats = [
-      { label: 'Total Rounds', value: mapRows.length.toLocaleString(), color: '#5865F2' },
-      { label: 'Dino Wins',    value: dinoWins.toLocaleString(),       color: '#ED4245' },
-      { label: 'Surv. Wins',   value: survivorWins.toLocaleString(),   color: '#57F287' },
+      { label: 'Total Rounds', value: totalRounds.toLocaleString(),  color: '#5865F2' },
+      { label: 'Dino Wins',    value: dinoWins.toLocaleString(),     color: '#ED4245' },
+      { label: 'Surv. Wins',   value: survivorWins.toLocaleString(), color: '#57F287' },
     ];
 
     const buffer = await buildPieCard({
@@ -59,7 +57,7 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode }) {
       stats:       cardStats,
       lookback:    `Past ${DAYS} Days`,
       segments,
-      centerLabel: `${mapRows.length.toLocaleString()}\nrounds`,
+      centerLabel: `${totalRounds.toLocaleString()}\nrounds`,
     });
 
     return interaction.editReply({
@@ -67,13 +65,16 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode }) {
     });
 
   } else {
-    const mapCounts = new Map();
-    for (const row of rows) {
+    // Map distribution — sum both outcomes per map
+    const mapTotals = new Map();
+    for (const row of data) {
       if (!row.map) continue;
-      mapCounts.set(row.map, (mapCounts.get(row.map) || 0) + 1);
+      mapTotals.set(row.map, (mapTotals.get(row.map) ?? 0) + Number(row.cnt));
     }
 
-    segments = [...mapCounts.entries()]
+    const totalRounds = [...mapTotals.values()].reduce((s, v) => s + v, 0);
+
+    segments = [...mapTotals.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([label, value]) => ({ label, value, color: MAP_COLORS[label] }));
 
@@ -81,7 +82,7 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode }) {
 
     cardTitle = 'Map Distribution';
     cardStats = [
-      { label: 'Total Rounds', value: rows.length.toLocaleString(), color: '#5865F2' },
+      { label: 'Total Rounds', value: totalRounds.toLocaleString(), color: '#5865F2' },
       { label: 'Maps',         value: segments.length.toString(),   color: '#57F287' },
     ];
 
@@ -91,7 +92,7 @@ async function renderPieChart(interaction, supabase, { mapFilter, gameMode }) {
       stats:       cardStats,
       lookback:    `Past ${DAYS} Days`,
       segments,
-      centerLabel: `${rows.length.toLocaleString()}\nrounds`,
+      centerLabel: `${totalRounds.toLocaleString()}\nrounds`,
     });
 
     return interaction.editReply({
@@ -109,21 +110,11 @@ module.exports = {
         .setDescription('Win/loss breakdown for a specific map (default: all maps distribution)')
         .setRequired(false)
         .addChoices(...ALL_MAPS.map(m => ({ name: m, value: m })))
-    )
-    .addStringOption(opt =>
-      opt.setName('game_mode')
-        .setDescription('Filter by game mode (default: all)')
-        .setRequired(false)
-        .addChoices(
-          { name: 'Normal',         value: 'Normal'         },
-          { name: 'Double Trouble', value: 'Double Trouble' },
-        )
     ),
 
   async execute(interaction, { supabase }) {
     await interaction.deferReply();
     const mapFilter = interaction.options.getString('map');
-    const gameMode  = interaction.options.getString('game_mode') ?? null;
-    await renderPieChart(interaction, supabase, { mapFilter, gameMode });
+    await renderPieChart(interaction, supabase, { mapFilter, gameMode: null });
   },
 };
