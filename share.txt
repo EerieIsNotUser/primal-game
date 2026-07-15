@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
+﻿const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
 const chrono = require('chrono-node');
 const { buildWinRateCardV2 } = require('../modules/chart');
 
@@ -139,22 +139,44 @@ async function queryWinRate(supabase, { category, item, gameMode, lobby, days, d
 // at high round volume, fetching every row just to count wins is wasteful).
 // Excludes the selected period itself so the baseline isn't self-referential.
 async function queryAllTimeBaseline(supabase, { category, item, gameMode, excludeRange }) {
-  const { data, error } = await supabase.rpc('get_winrate_baseline', {
-    p_category:      category,
-    p_item:          item,
-    p_game_mode:     gameMode && gameMode !== 'all' ? gameMode : null,
-    p_exclude_start: excludeRange?.startDate?.toISOString() ?? null,
-    p_exclude_end:   excludeRange?.endDate?.toISOString()   ?? null,
-  });
+  let baseQuery = supabase.from('round_logs').select('round_result', { count: 'exact' });
 
-  if (error) {
-    console.error('[winrate:baseline]', error.message);
-    return null;
+  if (gameMode && gameMode !== 'all') baseQuery = baseQuery.eq('game_mode', gameMode);
+  if (category === 'vehicle') baseQuery = baseQuery.eq('mvp_equipped_vehicle', item);
+  else if (category === 'weapon') baseQuery = baseQuery.eq('mvp_equipped_weapon', item);
+  else if (category === 'dino') baseQuery = baseQuery.contains('dinosaurs_used', [item]);
+
+  if (excludeRange) {
+    // Two separate count queries (before range, after range) since Supabase
+    // can't easily express "NOT BETWEEN" â€” sum the two counts together.
+    const beforeQuery = supabase.from('round_logs').select('round_result', { count: 'exact' });
+    const afterQuery = supabase.from('round_logs').select('round_result', { count: 'exact' });
+
+    let bq = beforeQuery, aq = afterQuery;
+    if (gameMode && gameMode !== 'all') { bq = bq.eq('game_mode', gameMode); aq = aq.eq('game_mode', gameMode); }
+    if (category === 'vehicle') { bq = bq.eq('mvp_equipped_vehicle', item); aq = aq.eq('mvp_equipped_vehicle', item); }
+    else if (category === 'weapon') { bq = bq.eq('mvp_equipped_weapon', item); aq = aq.eq('mvp_equipped_weapon', item); }
+    else if (category === 'dino') { bq = bq.contains('dinosaurs_used', [item]); aq = aq.contains('dinosaurs_used', [item]); }
+
+    bq = bq.lt('played_at', excludeRange.startDate.toISOString());
+    aq = aq.gt('played_at', excludeRange.endDate.toISOString());
+
+    const [{ data: beforeData, count: beforeCount, error: beforeErr }, { data: afterData, count: afterCount, error: afterErr }] =
+      await Promise.all([bq, aq]);
+
+    if (beforeErr || afterErr) return null;
+
+    const beforeWins = (beforeData ?? []).filter(r => r.round_result === 'SurvivorWin').length;
+    const afterWins = (afterData ?? []).filter(r => r.round_result === 'SurvivorWin').length;
+
+    return { total: (beforeCount ?? 0) + (afterCount ?? 0), wins: beforeWins + afterWins };
   }
 
-  const rows = data ?? [];
-  const wins = rows.filter(r => r.round_result === 'SurvivorWin').length;
-  return { total: rows.length, wins };
+  const { data, count, error } = await baseQuery;
+  if (error || !data) return null;
+
+  const wins = data.filter(r => r.round_result === 'SurvivorWin').length;
+  return { total: count ?? data.length, wins };
 }
 
 function computeWinRate(rows) {
