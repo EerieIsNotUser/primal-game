@@ -388,6 +388,17 @@ async function checkAndPostSummary() {
   }
 }
 
+let summaryCheckTimer = null;
+function debouncedSummaryCheck() {
+  if (summaryCheckTimer) return;
+  summaryCheckTimer = setTimeout(async () => {
+    summaryCheckTimer = null;
+    await checkAndPostSummary().catch(err =>
+      console.error('[round-complete] Summary check error:', err.message)
+    );
+  }, 30_000);
+}
+
 app.post('/api/round-complete', requireIngestKey, async (req, res) => {
   if (!req.body?.data?.Round_Map) console.log('[round-complete] Unexpected payload shape:', JSON.stringify(req.body));
   // Support both flat payload and Logger.Send wrapper ({ level, data: { ... } })
@@ -459,8 +470,8 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
   require('./modules/bot-status').recordSuccess();
   res.json({ received: true });
 
-  // Fire summary check after responding so it doesn't block the HTTP response
-  checkAndPostSummary();
+  // Debounced summary check — at most once every 30 seconds regardless of round volume
+  debouncedSummaryCheck();
 });
 
 const port = process.env.PORT || 3000;
