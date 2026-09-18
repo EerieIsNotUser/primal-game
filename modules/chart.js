@@ -2588,4 +2588,141 @@ async function buildMapChartCardV2(chartBuffer, _opts = {}) {
   return chartBuffer;
 }
 
-module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, buildWinRateCard, buildWinRateCardV2, buildMapChartCardV2, buildBalanceReportCard, buildGameStatsOverviewCard, bucketRoundsByMap, PALETTE, MAP_COLORS };
+function xmlEscape(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// ─── buildPlayerStatsCard ─────────────────────────────────────────────────────
+async function buildPlayerStatsCard({
+  robloxUsername = '',
+  robloxId       = '',
+  lookback       = '',
+  totalRounds    = 0,
+  totalDuration  = 0, // seconds
+  avgDuration    = 0, // seconds
+  roleBreakdown  = [], // [{ name, count }]
+  platformBreakdown = [], // [{ name, count }]
+  avgRespawns    = 0,
+} = {}) {
+  const CARD_W    = 700;
+  const PAD       = 24;
+  const HEADER_H  = 90;
+  const FOOTER_H  = 46;
+
+  const HERO_H     = 110;
+  const ROLE_H     = roleBreakdown.length > 0 ? 30 + roleBreakdown.length * 30 : 0;
+  const PLATFORM_H = platformBreakdown.length > 0 ? 30 + platformBreakdown.length * 30 : 0;
+  const BODY_H     = 16 + HERO_H + (ROLE_H > 0 ? 16 + ROLE_H : 0) + (PLATFORM_H > 0 ? 16 + PLATFORM_H : 0) + 16;
+  const CARD_H     = HEADER_H + BODY_H + FOOTER_H;
+
+  const HERO_Y     = HEADER_H + 16;
+  const ROLE_Y     = HERO_Y + HERO_H + 16;
+  const PLATFORM_Y = ROLE_Y + ROLE_H + (ROLE_H > 0 ? 16 : 0);
+  const FOOTER_Y   = HEADER_H + BODY_H;
+
+  function fmtDuration(sec) {
+    if (!sec || sec <= 0) return '—';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+
+  const headerBoxes = `
+    <rect x="${CARD_W - 220}" y="16" width="196" height="58" rx="8" fill="#1a1d21" stroke="rgba(255,255,255,0.06)"/>
+    <text x="${CARD_W - 202}" y="38" fill="#72767d" font-size="10" font-family="DejaVu Sans" letter-spacing="1">TOTAL ROUNDS</text>
+    <text x="${CARD_W - 202}" y="62" fill="#5865F2" font-size="22" font-weight="bold" font-family="DejaVu Sans">${totalRounds.toLocaleString()}</text>`;
+
+  const titleEl = `<text x="${PAD}" y="40" fill="#ffffff" font-size="24" font-weight="bold" font-family="DejaVu Sans">${xmlEscape(robloxUsername || 'Unknown Player')}</text>`;
+  const subEl   = `<text x="${PAD}" y="62" fill="#72767d" font-size="13" font-family="DejaVu Sans">Roblox ID: ${xmlEscape(robloxId)} · ${xmlEscape(lookback)}</text>`;
+
+  const heroCellW = Math.floor((CARD_W - PAD * 2 - 16) / 2);
+  const hero = `
+    <rect x="${PAD}" y="${HERO_Y}" width="${heroCellW}" height="${HERO_H}" rx="8" fill="#1a1d21" stroke="rgba(255,255,255,0.06)"/>
+    <text x="${PAD + 16}" y="${HERO_Y + 26}" fill="#6b6e7a" font-size="10" font-family="DejaVu Sans" letter-spacing="1">TOTAL PLAYTIME</text>
+    <text x="${PAD + 16}" y="${HERO_Y + 60}" fill="#57F287" font-size="32" font-weight="bold" font-family="DejaVu Sans">${fmtDuration(totalDuration)}</text>
+    <text x="${PAD + 16}" y="${HERO_Y + 86}" fill="#4a4d5e" font-size="12" font-family="DejaVu Sans">avg ${fmtDuration(avgDuration)} / round</text>
+
+    <rect x="${PAD + heroCellW + 16}" y="${HERO_Y}" width="${heroCellW}" height="${HERO_H}" rx="8" fill="#1a1d21" stroke="rgba(255,255,255,0.06)"/>
+    <text x="${PAD + heroCellW + 32}" y="${HERO_Y + 26}" fill="#6b6e7a" font-size="10" font-family="DejaVu Sans" letter-spacing="1">AVG RESPAWNS</text>
+    <text x="${PAD + heroCellW + 32}" y="${HERO_Y + 60}" fill="#FAA61A" font-size="32" font-weight="bold" font-family="DejaVu Sans">${avgRespawns ? avgRespawns.toFixed(1) : '—'}</text>
+    <text x="${PAD + heroCellW + 32}" y="${HERO_Y + 86}" fill="#4a4d5e" font-size="12" font-family="DejaVu Sans">per round</text>`;
+
+  let roleSvg = '';
+  if (roleBreakdown.length > 0) {
+    const totalRoleCount = roleBreakdown.reduce((s, r) => s + r.count, 0) || 1;
+    const barX   = PAD + 100;
+    const barMax = Math.floor((CARD_W - PAD * 2) * 0.55);
+    const pctX   = barX + barMax + 12;
+
+    roleSvg += `<text x="${PAD}" y="${ROLE_Y - 6}" fill="#4a4d5e" font-size="10" font-family="DejaVu Sans" letter-spacing="1">ROLE BREAKDOWN</text>`;
+    roleBreakdown.forEach((r, i) => {
+      const rowY  = ROLE_Y + 20 + i * 30;
+      const pct   = Math.round((r.count / totalRoleCount) * 100);
+      const barW  = Math.round((pct / 100) * barMax);
+      const color = r.name.toLowerCase() === 'dino' ? '#ED4245' : '#57F287';
+      roleSvg += `
+        <text x="${PAD}" y="${rowY + 16}" fill="#8b8fa8" font-size="12" font-family="DejaVu Sans">${xmlEscape(r.name)}</text>
+        <rect x="${barX}" y="${rowY + 5}" width="${barMax}" height="10" rx="3" fill="rgba(255,255,255,0.05)"/>
+        <rect x="${barX}" y="${rowY + 5}" width="${barW}" height="10" rx="3" fill="${color}" opacity="0.75"/>
+        <text x="${pctX}" y="${rowY + 16}" fill="#b5b9bf" font-size="12" font-weight="bold" font-family="DejaVu Sans">${pct}%</text>`;
+    });
+  }
+
+  let platformSvg = '';
+  if (platformBreakdown.length > 0) {
+    const totalPlatCount = platformBreakdown.reduce((s, p) => s + p.count, 0) || 1;
+    const barX   = PAD + 100;
+    const barMax = Math.floor((CARD_W - PAD * 2) * 0.55);
+    const pctX   = barX + barMax + 12;
+
+    platformSvg += `<text x="${PAD}" y="${PLATFORM_Y - 6}" fill="#4a4d5e" font-size="10" font-family="DejaVu Sans" letter-spacing="1">PLATFORM USAGE</text>`;
+    platformBreakdown.forEach((p, i) => {
+      const rowY = PLATFORM_Y + 20 + i * 30;
+      const pct  = Math.round((p.count / totalPlatCount) * 100);
+      const barW = Math.round((pct / 100) * barMax);
+      platformSvg += `
+        <text x="${PAD}" y="${rowY + 16}" fill="#8b8fa8" font-size="12" font-family="DejaVu Sans">${xmlEscape(p.name)}</text>
+        <rect x="${barX}" y="${rowY + 5}" width="${barMax}" height="10" rx="3" fill="rgba(255,255,255,0.05)"/>
+        <rect x="${barX}" y="${rowY + 5}" width="${barW}" height="10" rx="3" fill="#5865F2" opacity="0.7"/>
+        <text x="${pctX}" y="${rowY + 16}" fill="#b5b9bf" font-size="12" font-weight="bold" font-family="DejaVu Sans">${pct}%</text>`;
+    });
+  }
+
+  const ftY = FOOTER_Y + 26;
+  const footerLeft = `<text x="20" y="${ftY}" fill="#72767d" font-size="13" font-family="DejaVu Sans">Lookback: ${xmlEscape(lookback)} — UTC</text>`;
+  const footerRight = `
+    <rect x="${CARD_W - 118}" y="${FOOTER_Y + 10}" width="28" height="20" rx="5" fill="#5865F2"/>
+    <text x="${CARD_W - 104}" y="${FOOTER_Y + 24}" fill="white" font-size="11" font-weight="bold" font-family="DejaVu Sans" text-anchor="middle">PG</text>
+    <text x="${CARD_W - 84}" y="${ftY}" fill="#72767d" font-size="13" font-family="DejaVu Sans">PrimalGame</text>`;
+
+  const cardSvg = `
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${HEADER_H}" fill="#1e2024"/>
+  <rect y="${HEADER_H}" width="${CARD_W}" height="${BODY_H}" fill="#15171a"/>
+  <rect y="${FOOTER_Y}" width="${CARD_W}" height="${FOOTER_H}" fill="#0e0f11"/>
+  <line x1="0" y1="${HEADER_H}" x2="${CARD_W}" y2="${HEADER_H}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <line x1="0" y1="${FOOTER_Y}" x2="${CARD_W}" y2="${FOOTER_Y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  ${headerBoxes}
+  ${titleEl}
+  ${subEl}
+  ${hero}
+  ${roleSvg}
+  ${platformSvg}
+  ${footerLeft}
+  ${footerRight}
+</svg>`;
+
+  const flat = await sharp(Buffer.from(cardSvg)).png().toBuffer();
+  const maskBuffer = await sharp(Buffer.from(`
+<svg width="${CARD_W}" height="${CARD_H}" xmlns="http://www.w3.org/2000/svg">
+  <rect width="${CARD_W}" height="${CARD_H}" rx="${CORNER_R}" ry="${CORNER_R}" fill="white"/>
+</svg>`)).png().toBuffer();
+
+  return sharp(flat).composite([{ input: maskBuffer, blend: 'dest-in' }]).png().toBuffer();
+}
+
+module.exports = { buildLineChartImage, buildDualAxisChartImage, buildChartCard, buildStatCard, buildPieCard, buildTierListCard, buildWinRateDashboard, buildWinRateCard, buildWinRateCardV2, buildMapChartCardV2, buildBalanceReportCard, buildGameStatsOverviewCard, buildPlayerStatsCard, bucketRoundsByMap, PALETTE, MAP_COLORS };

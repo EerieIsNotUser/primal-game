@@ -34,7 +34,7 @@ const TIME_RANGES = [
 async function fetchRows(supabase, placeId, days, minLevel = null, maxLevel = null) {
   let query = supabase
     .from('round_logs')
-    .select('round_result, map, game_mode, mvp_equipped_weapon, mvp_equipped_vehicle, dinosaurs_used, average_level')
+    .select('id, round_result, map, game_mode, mvp_equipped_weapon, mvp_equipped_vehicle, dinosaurs_used, average_level')
     .eq('place_id', placeId)
     .limit(100000);
 
@@ -139,7 +139,7 @@ function buildMvpStats(rows, field, limit = 10) {
 }
 
 // ── Card builders ─────────────────────────────────────────────────────────────
-async function buildOverviewCard(stats, rows, lobbyLabel, lookback) {
+async function buildOverviewCard(stats, rows, lobbyLabel, lookback, supabase, roundIds) {
   const { total, dinoWins, survivorWins } = stats;
 
   const MAPS = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
@@ -159,6 +159,26 @@ async function buildOverviewCard(stats, rows, lobbyLabel, lookback) {
   }
   const modeData = [...modeMap.entries()].map(([name, c]) => ({ name, ...c }));
 
+  // ── Platform breakdown ──────────────────────────────────────────────────
+  let platformData = [];
+  if (roundIds?.length > 0) {
+    const { data: platformRows, error: platformErr } = await supabase
+      .from('round_players')
+      .select('platform')
+      .in('round_id', roundIds)
+      .not('platform', 'is', null);
+
+    if (!platformErr && platformRows?.length) {
+      const platformCounts = new Map();
+      for (const row of platformRows) {
+        platformCounts.set(row.platform, (platformCounts.get(row.platform) ?? 0) + 1);
+      }
+      platformData = [...platformCounts.entries()]
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count);
+    }
+  }
+
   return buildGameStatsOverviewCard({
     title:        `${lobbyLabel} — Win Rate Overview`,
     subtitle:     `Primal Pursuit · ${lookback}`,
@@ -168,6 +188,7 @@ async function buildOverviewCard(stats, rows, lobbyLabel, lookback) {
     survivorWins,
     maps:         mapData,
     modes:        modeData,
+    platforms:    platformData,
   });
 }
 
@@ -282,8 +303,9 @@ module.exports = {
     const weaponStats   = buildMvpStats(rows, 'mvp_equipped_weapon');
 
     // Build all four cards
+    const roundIds = rows.map(r => r.id).filter(Boolean);
     const [overviewBuf, dinoBuf, vehicleBuf, weaponBuf] = await Promise.all([
-      buildOverviewCard(overviewStats, rows, lobbyLabel, lookback),
+      buildOverviewCard(overviewStats, rows, lobbyLabel, lookback, supabase, roundIds),
       buildDinoCard(dinoStats,     lobbyLabel, lookback),
       buildMvpCard(vehicleStats, 'vehicle', lobbyLabel, lookback),
       buildMvpCard(weaponStats,  'weapon',  lobbyLabel, lookback),

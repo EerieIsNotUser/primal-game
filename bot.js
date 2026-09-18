@@ -410,6 +410,7 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
     Round_NumPlayers_WithDinoTrackers, Round_NumPlayers_WithMines, Round_NumPlayers_WithGamepassWeapons,
     Round_DinosaursUsed, Round_VehiclesUsed, Round_WeaponsUsed,
     Round_MVP_EquippedVehicle, Round_MVP_EquippedWeapon, Round_MVP_Damage,
+    Round_Players,
   } = body;
 
   // Analyse payload for Lua-side scripting issues before anything else
@@ -435,7 +436,7 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
   const safeNum = (v) => (v == null || (typeof v === 'number' && isNaN(v))) ? null : v;
   const safeInt = (v, fallback = 0) => (v == null || (typeof v === 'number' && isNaN(v))) ? fallback : v;
 
-  const { error } = await supabase.from('round_logs').insert({
+  const { data: insertedRoundRows, error } = await supabase.from('round_logs').insert({
     played_at:    roundEndTime,
     received_at:  new Date().toISOString(),
     place_id:     req.body?.placeId ?? null,
@@ -458,13 +459,39 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
     mvp_equipped_vehicle: Round_MVP_EquippedVehicle ?? null,
     mvp_equipped_weapon:  Round_MVP_EquippedWeapon  ?? null,
     mvp_damage:           safeNum(Round_MVP_Damage),
-  });
+  }).select('id');
 
   if (error) {
     console.error('[round-complete] Insert error:', error.message);
     postIngestionError(`Supabase insert failed — ${error.message}`);
     require('./modules/bot-status').recordError(error.message);
     return res.status(500).json({ error: 'Failed to log round' });
+  }
+
+  // ── Per-player rows (duration, platform, role, respawns) ───────────────────
+  // Non-blocking — a per-player insert failure should never fail the round log.
+  const insertedRoundId = insertedRoundRows?.[0]?.id;
+  if (Array.isArray(Round_Players) && Round_Players.length > 0 && insertedRoundId) {
+    {
+      const playerRows = Round_Players.map(p => ({
+        round_id:         insertedRoundId,
+        roblox_user_id:   String(p.UserId ?? p.RobloxUserId ?? ''),
+        platform:         p.Platform ?? null,
+        touch_enabled:    typeof p.TouchEnabled === 'boolean' ? p.TouchEnabled : null,
+        preferred_input:  p.PreferredInput ?? null,
+        duration_seconds: safeNum(p.DurationSeconds),
+        role:             p.Role ?? null,
+        respawn_count:    safeInt(p.RespawnCount, null),
+      })).filter(p => p.roblox_user_id);
+
+      if (playerRows.length > 0) {
+        const { error: playerError } = await supabase.from('round_players').insert(playerRows);
+        if (playerError) {
+          console.error('[round-complete] round_players insert error:', playerError.message);
+          postIngestionError(`round_players insert failed — ${playerError.message}`);
+        }
+      }
+    }
   }
 
   require('./modules/bot-status').recordSuccess();
