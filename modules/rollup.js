@@ -147,6 +147,7 @@ function aggregateRows(rows) {
 
 // ── Main rollup function ──────────────────────────────────────────────────────
 async function runRollup(supabase) {
+  if (process.env.ROLLUP_ENABLED !== 'true') return { success: false, error: 'Rollup is disabled (ROLLUP_ENABLED is not set to true), so nothing was deleted.' };
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
   const cutoffISO = cutoff.toISOString();
 
@@ -309,6 +310,13 @@ function getMsUntilNext3amUTC() {
 }
 
 module.exports = function setupRollup(client, { supabase }) {
+  // Off unless ROLLUP_ENABLED=true. The job deletes raw round_logs rows older than RETENTION_DAYS, and the website
+  // reads those raw rows directly, so it must never run by default.
+  if (process.env.ROLLUP_ENABLED !== 'true') {
+    console.log('[rollup] Disabled (set ROLLUP_ENABLED=true to turn the nightly rollup on). No raw rounds will be deleted.');
+    return;
+  }
+
   async function scheduleNext() {
     const ms  = getMsUntilNext3amUTC();
     const hrs = (ms / (60 * 60 * 1000)).toFixed(1);
