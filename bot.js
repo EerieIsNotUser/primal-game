@@ -399,6 +399,28 @@ function debouncedSummaryCheck() {
   }, 30_000);
 }
 
+async function postIngestionNotice(msg) {
+  try {
+    const ch = client.channels.cache.get(INGESTION_ERROR_CH)
+      ?? await client.channels.fetch(INGESTION_ERROR_CH).catch(() => null);
+    if (ch) await ch.send(`✅ ${msg}`);
+  } catch (err) {
+    console.error('[ingestion-errors] Failed to post notice:', err.message);
+  }
+}
+
+// Rounds go through a durable queue (see modules/roundQueue.js). Set ROUND_QUEUE_DIR
+// to a mounted volume if the backlog journal should survive a fresh container.
+const roundQueue = require('./modules/roundQueue').create({
+  supabase,
+  dir:       process.env.ROUND_QUEUE_DIR || path.join(__dirname, 'data'),
+  onAlert:   (msg) => postIngestionError(msg),
+  onNotice:  (msg) => postIngestionNotice(msg),
+  onSuccess: () => { require('./modules/bot-status').recordSuccess(); debouncedSummaryCheck(); },
+  onError:   (msg) => require('./modules/bot-status').recordError(msg),
+});
+let lastRefusalAlertAt = 0;
+
 app.post('/api/round-complete', requireIngestKey, async (req, res) => {
   if (!req.body?.data?.Round_Map) console.log('[round-complete] Unexpected payload shape:', JSON.stringify(req.body));
   // Support both flat payload and Logger.Send wrapper ({ level, data: { ... } })
@@ -436,9 +458,8 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
   const safeNum = (v) => (v == null || (typeof v === 'number' && isNaN(v))) ? null : v;
   const safeInt = (v, fallback = 0) => (v == null || (typeof v === 'number' && isNaN(v))) ? fallback : v;
 
-  const { data: insertedRoundRows, error } = await supabase.from('round_logs').insert({
+  const roundRow = {
     played_at:    roundEndTime,
-    received_at:  new Date().toISOString(),
     place_id:     req.body?.placeId ?? null,
     round_result: normalisedResult,
     average_level:             safeNum(Round_AverageLevel),
@@ -459,22 +480,13 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
     mvp_equipped_vehicle: Round_MVP_EquippedVehicle ?? null,
     mvp_equipped_weapon:  Round_MVP_EquippedWeapon  ?? null,
     mvp_damage:           safeNum(Round_MVP_Damage),
-  }).select('id');
-
-  if (error) {
-    console.error('[round-complete] Insert error:', error.message);
-    postIngestionError(`Supabase insert failed — ${error.message}`);
-    require('./modules/bot-status').recordError(error.message);
-    return res.status(500).json({ error: 'Failed to log round' });
-  }
+  };
 
   // ── Per-player rows (duration, platform, role, respawns) ───────────────────
-  // Non-blocking — a per-player insert failure should never fail the round log.
-  const insertedRoundId = insertedRoundRows?.[0]?.id;
-  if (Array.isArray(Round_Players) && Round_Players.length > 0 && insertedRoundId) {
-    {
-      const playerRows = Round_Players.map(p => ({
-        round_id:         insertedRoundId,
+  // The queue attaches the round's id once the round is written. A failure here
+  // never fails or repeats the round log.
+  const playerRows = Array.isArray(Round_Players)
+    ? Round_Players.map(p => ({
         roblox_user_id:   String(p.UserId ?? p.RobloxUserId ?? ''),
         platform:         p.Platform ?? null,
         touch_enabled:    typeof p.TouchEnabled === 'boolean' ? p.TouchEnabled : null,
@@ -482,26 +494,37 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
         duration_seconds: safeNum(p.DurationSeconds),
         role:             p.Role ?? null,
         respawn_count:    safeInt(p.RespawnCount, null),
-      })).filter(p => p.roblox_user_id);
+      })).filter(p => p.roblox_user_id)
+    : [];
 
-      if (playerRows.length > 0) {
-        const { error: playerError } = await supabase.from('round_players').insert(playerRows);
-        if (playerError) {
-          console.error('[round-complete] round_players insert error:', playerError.message);
-          postIngestionError(`round_players insert failed — ${playerError.message}`);
-        }
-      }
+  // Hand the round to the durable queue. It is journaled to disk before we answer,
+  // written to Supabase one round at a time, and retried until it lands, so a busy
+  // database delays a round instead of losing it. See modules/roundQueue.js.
+  const queued = roundQueue.enqueue(roundRow, playerRows);
+  if (!queued.ok) {
+    const errMsg = `Round not accepted — ${queued.reason}`;
+    console.error('[round-complete]', errMsg);
+    require('./modules/bot-status').recordError(errMsg);
+    if (Date.now() - lastRefusalAlertAt > 10 * 60_000) {
+      lastRefusalAlertAt = Date.now();
+      postIngestionError(`${errMsg}. Rounds are being refused until the backlog clears.`);
     }
+    res.set('Retry-After', '30');
+    return res.status(503).json({ error: queued.reason });
   }
 
-  require('./modules/bot-status').recordSuccess();
-  res.json({ received: true });
-
-  // Debounced summary check — at most once every 30 seconds regardless of round volume
-  debouncedSummaryCheck();
+  res.json({ received: true, queued: true });
 });
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`PrimalGame ingestion API listening on port ${port}`);
+});
+
+// On deploy, stop taking rounds and give the one in flight a moment to finish.
+// Anything still queued is already in the journal and is picked up on next start.
+process.on('SIGTERM', async () => {
+  const { pending } = await roundQueue.shutdown(2500);
+  console.log(`[round-queue] Shutting down with ${pending} round(s) still queued.`);
+  process.exit(0);
 });

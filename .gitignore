@@ -1,3 +1,6 @@
 node_modules/
 .env
 *.log
+
+# Round queue journal (local backlog and set-aside rounds)
+data/
