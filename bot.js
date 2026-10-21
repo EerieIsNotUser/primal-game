@@ -455,8 +455,18 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
 
   // Sanitise numeric fields — KKG's script can send NaN (e.g. 0/0 average level)
   // which Supabase rejects for numeric columns. Replace NaN with null.
-  const safeNum = (v) => (v == null || (typeof v === 'number' && isNaN(v))) ? null : v;
-  const safeInt = (v, fallback = 0) => (v == null || (typeof v === 'number' && isNaN(v))) ? fallback : v;
+  // The game's JSON encoder cannot write NaN, so it sends a wrapper object instead:
+  // {"m":null,"t":"numeric","v":"nan"}. Unwrap it: a finite value becomes a number,
+  // nan/inf become null. (Left as an object the database rejects the whole round.)
+  const unwrapNum = (v) => {
+    if (v !== null && typeof v === 'object' && v.t === 'numeric') {
+      const n = (typeof v.v === 'number' || (typeof v.v === 'string' && v.v.trim() !== '')) ? Number(v.v) : NaN;
+      return Number.isFinite(n) ? n : null;
+    }
+    return v;
+  };
+  const safeNum = (v) => { v = unwrapNum(v); return (v == null || (typeof v === 'number' && isNaN(v))) ? null : v; };
+  const safeInt = (v, fallback = 0) => { v = unwrapNum(v); return (v == null || (typeof v === 'number' && isNaN(v))) ? fallback : v; };
 
   const roundRow = {
     played_at:    roundEndTime,
