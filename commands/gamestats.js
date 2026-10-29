@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
+const { SlashCommandBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { buildGameStatsOverviewCard, buildTierListCard, MAP_COLORS } = require('../modules/chart');
 
 // ─── /gamestats ───────────────────────────────────────────────────────────────
@@ -29,6 +29,12 @@ const TIME_RANGES = [
   { name: 'Past Year',    value: '365' },
   { name: 'All Time',     value: 'all' },
 ];
+
+// Where the full numbers live. WEBSITE_URL can override it (staging, a new domain).
+const ANALYTICS_URL = `${(process.env.WEBSITE_URL || 'https://www.primalpursuitrblx.com').replace(/\/+$/, '')}/dashboard`;
+const analyticsRow = () => new ActionRowBuilder().addComponents(
+  new ButtonBuilder().setLabel('Open analytics').setStyle(ButtonStyle.Link).setURL(ANALYTICS_URL),
+);
 
 // ── Data fetching ─────────────────────────────────────────────────────────────
 async function fetchRows(supabase, placeId, days, minLevel = null, maxLevel = null) {
@@ -315,6 +321,7 @@ module.exports = {
     await interaction.editReply({
       content: `**${lobbyLabel} Stats** — ${lookback} · ${rows.length.toLocaleString()} rounds`,
       files: [new AttachmentBuilder(overviewBuf, { name: 'gamestats-overview.png' })],
+      components: [analyticsRow()],
     });
 
     await interaction.followUp({
