@@ -526,6 +526,43 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
   res.json({ received: true, queued: true });
 });
 
+// ── Player data ─────────────────────────────────────────────────────────────
+// Per-player events the game sends as their own payload (e.g. a player leaving,
+// with their play time). Separate from round data on purpose. Same ingest key as
+// /api/round-complete. Accepted shapes and field names: PLAYER_DATA.md.
+const { normalizePayload } = require('./modules/playerData');
+const playerQueue = require('./modules/playerDataQueue').create({
+  supabase,
+  onAlert:  (msg) => postIngestionError(msg),
+  onNotice: (msg) => postIngestionNotice(msg),
+});
+let lastPlayerDataAlertAt = 0;
+
+app.post('/api/player-data', requireIngestKey, (req, res) => {
+  const { rows, rejected, error } = normalizePayload(req.body);
+
+  if (error || rows.length === 0) {
+    const reason = error ?? `no usable players (${rejected.slice(0, 3).map(r => `#${r.index}: ${r.reason}`).join('; ')})`;
+    console.error('[player-data]', reason);
+    // Bad payloads are the sender's to fix; ping at most every 10 minutes so a loop on the game side cannot flood the channel.
+    if (Date.now() - lastPlayerDataAlertAt > 10 * 60_000) {
+      lastPlayerDataAlertAt = Date.now();
+      postIngestionError(`player_data payload refused — ${reason}. Body started: ${JSON.stringify(req.body).slice(0, 300)}`);
+    }
+    return res.status(400).json({ error: reason, rejected: rejected.slice(0, 10) });
+  }
+
+  const queued = playerQueue.enqueue(rows);
+  if (!queued.ok) {
+    console.error('[player-data] Not accepted —', queued.reason);
+    res.set('Retry-After', '30');
+    return res.status(503).json({ error: queued.reason });
+  }
+
+  // Partly usable payloads are accepted; the rejected entries are listed so the sender can see them.
+  res.json({ received: true, accepted: rows.length, rejected: rejected.length, ...(rejected.length ? { rejectedEntries: rejected.slice(0, 10) } : {}) });
+});
+
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`PrimalGame ingestion API listening on port ${port}`);
@@ -534,7 +571,8 @@ app.listen(port, () => {
 // On deploy, stop taking rounds and give the one in flight a moment to finish.
 // Anything still queued is already in the journal and is picked up on next start.
 process.on('SIGTERM', async () => {
-  const { pending } = await roundQueue.shutdown(2500);
+  const [{ pending }, playerPending] = await Promise.all([roundQueue.shutdown(2500), playerQueue.shutdown(2500)]);
   console.log(`[round-queue] Shutting down with ${pending} round(s) still queued.`);
+  if (playerPending.pending) console.log(`[player-data] Shutting down with ${playerPending.pending} row(s) still queued.`);
   process.exit(0);
 });
