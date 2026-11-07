@@ -178,21 +178,17 @@ app.post('/github-webhook', express.raw({ type: '*/*' }), async (req, res) => {
   res.json({ ok: true });
 });
 
+// Shared-secret check for the /api/* ingestion routes (constant-time compare, see modules/ingestAuth.js).
+// Mounted before the body parser so a request without the key is refused before its body is read.
+// (express.json() also unzips a gzip body, so the game can send `Compress = Enum.HttpCompression.Gzip` with no change here.)
+const { requireIngestKey } = require('./modules/ingestAuth');
+app.use('/api', requireIngestKey);
+
 app.use(express.json());
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'primalgame' });
 });
-
-// Shared-secret check for any future /api/* ingestion routes.
-function requireIngestKey(req, res, next) {
-  const key = req.headers['x-api-key']
-    ?? req.headers['authorization']?.replace(/^Bearer\s+/i, '');
-  if (!key || key !== process.env.INGEST_API_KEY) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
-  next();
-}
 
 const { checkAndPostLuaError } = require('./modules/lua-errors');
 const SUMMARY_CHANNEL_ID   = '1515751286312669354';
