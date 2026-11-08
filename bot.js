@@ -123,7 +123,7 @@ client.login(process.env.DISCORD_TOKEN?.trim());
 // Roblox (via KKG's script) will POST round-complete payloads here once the
 // payload shape is finalized. For now this is just a health check + stub so
 // the Express server has somewhere to live from day one.
-const crypto = require('crypto');
+const { signatureMatches } = require('./modules/githubSignature');
 const app    = express();
 
 // ── GitHub push webhook (must be BEFORE express.json()) ───────────────────────
@@ -131,51 +131,59 @@ app.post('/github-webhook', express.raw({ type: '*/*' }), async (req, res) => {
   const sig    = req.headers['x-hub-signature-256'];
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
 
-  if (secret && sig) {
-    const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(req.body).digest('hex');
-    try {
-      if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
-        return res.status(401).json({ error: 'Invalid signature' });
-      }
-    } catch {
-      return res.status(401).json({ error: 'Invalid signature' });
+  // When a secret is configured the signature is mandatory: a request that simply leaves the header off is refused,
+  // not waved through. (With no secret configured nothing can be checked, as before.)
+  if (secret && !signatureMatches(secret, sig, req.body)) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+
+  // Express 4 does not catch a rejection from an async handler, so a bad body used to leave the connection hanging and raise an
+  // unhandled rejection (which posts to the Discord error channel). Parse inside a guard and answer 400.
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString() : '');
+  } catch {
+    return res.status(400).json({ error: 'Body is not JSON' });
+  }
+  if (!payload || typeof payload !== 'object' || !payload.commits?.length || !Array.isArray(payload.commits)) return res.json({ ok: true });
+
+  try {
+    const branch   = String(payload.ref ?? '').replace('refs/heads/', '') || 'unknown';
+    const pusher   = String(payload.pusher?.name ?? 'Unknown');
+    const discord  = ({ 'EerieIsNotUser': 'EerieIsUser' })[pusher] ?? pusher;
+    const repoName = String(payload.repository?.name ?? 'primal-game');
+
+    const ch = client.channels.cache.get('1521953811428671568')
+      ?? await client.channels.fetch('1521953811428671568').catch(() => null);
+    if (!ch) return res.status(500).json({ error: 'Channel not found' });
+
+    for (const commit of payload.commits) {
+      const embed = new EmbedBuilder()
+        .setColor(0x24292e)
+        .setAuthor({
+          name:    `${discord} pushed an update`,
+          iconURL: `https://github.com/${pusher}.png`,
+        })
+        .setDescription(String(commit?.message ?? ''))
+        .setThumbnail(client.user?.displayAvatarURL({ size: 256 }) ?? null)
+        .addFields(
+          { name: 'Branch',     value: branch,   inline: true },
+          { name: 'Repository', value: repoName, inline: true },
+        )
+        .setFooter({ text: `Discord: @${discord}` })
+        .setTimestamp(new Date(commit?.timestamp));
+
+      await ch.send({ embeds: [embed] }).catch(err =>
+        console.error('[github-webhook] Failed to post:', err.message)
+      );
     }
+
+    res.json({ ok: true });
+  } catch (err) {
+    // A payload that cannot be drawn as an embed (empty message, bad date, too long) must not become an unhandled rejection.
+    console.error('[github-webhook] Could not handle payload:', err.message);
+    if (!res.headersSent) res.status(400).json({ error: 'Payload could not be handled' });
   }
-
-  const payload = JSON.parse(req.body.toString());
-  if (!payload.commits?.length) return res.json({ ok: true });
-
-  const branch   = payload.ref?.replace('refs/heads/', '') ?? 'unknown';
-  const pusher   = payload.pusher?.name ?? 'Unknown';
-  const discord  = ({ 'EerieIsNotUser': 'EerieIsUser' })[pusher] ?? pusher;
-  const repoName = payload.repository?.name ?? 'primal-game';
-
-  const ch = client.channels.cache.get('1521953811428671568')
-    ?? await client.channels.fetch('1521953811428671568').catch(() => null);
-  if (!ch) return res.status(500).json({ error: 'Channel not found' });
-
-  for (const commit of payload.commits) {
-    const embed = new EmbedBuilder()
-      .setColor(0x24292e)
-      .setAuthor({
-        name:    `${discord} pushed an update`,
-        iconURL: `https://github.com/${pusher}.png`,
-      })
-      .setDescription(commit.message)
-      .setThumbnail(client.user?.displayAvatarURL({ size: 256 }) ?? null)
-      .addFields(
-        { name: 'Branch',     value: branch,   inline: true },
-        { name: 'Repository', value: repoName, inline: true },
-      )
-      .setFooter({ text: `Discord: @${discord}` })
-      .setTimestamp(new Date(commit.timestamp));
-
-    await ch.send({ embeds: [embed] }).catch(err =>
-      console.error('[github-webhook] Failed to post:', err.message)
-    );
-  }
-
-  res.json({ ok: true });
 });
 
 // Shared-secret check for the /api/* ingestion routes (constant-time compare, see modules/ingestAuth.js).
