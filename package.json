@@ -7,7 +7,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node bot.js",
-    "test": "node tests/playerData.test.js && node tests/ingestAuth.test.js && node tests/githubWebhook.test.js && node tests/botErrors.test.js && node tests/roundPayload.test.js",
+    "test": "node tests/playerData.test.js && node tests/ingestAuth.test.js && node tests/githubWebhook.test.js && node tests/botErrors.test.js && node tests/roundPayload.test.js && node tests/readPaged.test.js && node tests/mapBaseline.test.js",
     "deploy-commands": "node deploy-commands.js"
   },
   "dependencies": {

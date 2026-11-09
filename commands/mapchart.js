@@ -6,6 +6,7 @@ const {
   ButtonStyle,
   StringSelectMenuBuilder,
 } = require('discord.js');
+const { readPaged } = require('../modules/readPaged');
 const { buildLineChartImage, buildDualAxisChartImage, bucketRoundsByMap, MAP_COLORS } = require('../modules/chart');
 
 // ─── /mapchart ───────────────────────────────────────────────────────────
@@ -130,49 +131,60 @@ function bucketWinRateByDay(rows, days) {
   return { labels, data };
 }
 
-// Fetch map + result data for the past 6 months — unions raw rows (recent)
-// with round_stats_daily aggregates (historical, post-rollup).
-async function getSixMonthBaseline(supabase) {
-  const sixMonthCutoff = new Date();
+// The six-month map baseline: how many rounds each map had, as { counts: Map(map -> rounds), total }.
+//
+// It used to read every round of the last six months from round_logs (about 3.8 million rows at the time of writing) in
+// one request. The API cuts a request at its row cap without saying so, so the shares came from an arbitrary slice of the
+// rows (and a full scan takes longer than the anon role's 3 second limit). Now it reads the maintained per-day counters
+// (map_daily_stats, one row per map and day, the same rounds with the same excluded place) and adds the rolled-up days
+// from round_stats_daily older than the retention window, as before. The only difference is the first day: counters are
+// per whole day, so the window starts at the start of that day instead of at the exact time six months ago.
+// Every read is paged with a unique order; if a read fails or hits the safety stop the baseline is skipped (null)
+// rather than shown from partial data.
+async function getSixMonthBaseline(supabase, { read = readPaged, now = Date.now() } = {}) {
+  const sixMonthCutoff = new Date(now);
   sixMonthCutoff.setMonth(sixMonthCutoff.getMonth() - 6);
+  const cutoffDay = sixMonthCutoff.toISOString().slice(0, 10);
+  const retentionDay = new Date(now - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  const retentionCutoff = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+  const counters = await read(() => supabase
+    .from('map_daily_stats').select('map, day, total')
+    .gte('day', cutoffDay)
+    .order('day', { ascending: true }).order('map', { ascending: true }));
+  if (counters.error || counters.truncated) return null;
 
-  // Raw rows within retention window
-  const { data: rawRows, error: rawErr } = await supabase
-    .from('round_logs')
-    .select('map, round_result')
-    .gte('played_at', sixMonthCutoff.toISOString())
-    .neq('place_id', '100026158235338');
+  // Aggregate rows older than the retention window (several rows per day and map, so the row id breaks ties)
+  const rolled = await read(() => supabase
+    .from('round_stats_daily').select('id, map, dino_wins, survivor_wins')
+    .gte('day', cutoffDay)
+    .lt('day', retentionDay)
+    .order('id', { ascending: true }));
+  if (rolled.error || rolled.truncated) return null;
 
-  if (rawErr) return null;
-
-  // Aggregate rows older than retention window
-  const { data: aggRows, error: aggErr } = await supabase
-    .from('round_stats_daily')
-    .select('map, dino_wins, survivor_wins')
-    .gte('day', sixMonthCutoff.toISOString().slice(0, 10))
-    .lt('day', retentionCutoff.toISOString().slice(0, 10));
-
-  if (aggErr) return null;
-
-  // Expand aggregate rows into synthetic row objects so mapShareOf() works unchanged
-  const expandedAggRows = [];
-  for (const agg of (aggRows ?? [])) {
-    for (let i = 0; i < agg.dino_wins; i++)     expandedAggRows.push({ map: agg.map, round_result: 'DinoWin' });
-    for (let i = 0; i < agg.survivor_wins; i++) expandedAggRows.push({ map: agg.map, round_result: 'SurvivorWin' });
-  }
-
-  return [...(rawRows ?? []), ...expandedAggRows];
+  const counts = new Map();
+  let total = 0;
+  const add = (map, n) => {
+    n = Number(n) || 0;
+    total += n;
+    if (map) counts.set(map, (counts.get(map) || 0) + n);
+  };
+  for (const r of counters.rows) add(r.map, r.total);
+  for (const r of rolled.rows) add(r.map, (r.dino_wins || 0) + (r.survivor_wins || 0));
+  return { counts, total };
 }
 
+// map -> share of all rounds, from a list of rounds
 function mapShareOf(rows) {
   const counts = new Map();
   for (const row of rows) {
     if (!row.map) continue;
     counts.set(row.map, (counts.get(row.map) || 0) + 1);
   }
-  const total = rows.length;
+  return mapShareFromCounts(counts, rows.length);
+}
+
+// map -> share of all rounds, from counts per map and the total
+function mapShareFromCounts(counts, total) {
   const shares = new Map();
   for (const [map, count] of counts) {
     shares.set(map, total > 0 ? count / total : 0);
@@ -195,13 +207,13 @@ function winRateByMap(rows) {
 
 // Build the narrative message: popularity shifts (vs 6-month baseline) +
 // per-map dino/survivor win rates for the selected window.
-function buildChartNarrative(selectedRows, baselineRows, mapsShown) {
+function buildChartNarrative(selectedRows, baseline, mapsShown) {
   const lines = [];
 
   // Popularity shift detection (only for maps actually shown in the chart)
-  if (baselineRows && baselineRows.length > 0) {
+  if (baseline && baseline.total > 0) {
     const selectedShare = mapShareOf(selectedRows);
-    const baselineShare = mapShareOf(baselineRows);
+    const baselineShare = mapShareFromCounts(baseline.counts, baseline.total);
 
     const shifts = [];
     for (const map of mapsShown) {
@@ -260,7 +272,7 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
   const { labels, series } = bucketRoundsByMap(rows, startDate, endDate, bucketMs);
   if (series.length === 0) return interaction.editReply('No map data available to chart.');
 
-  const baselineRows = await getSixMonthBaseline(supabase);
+  const baseline = await getSixMonthBaseline(supabase);
 
   let buffer;
   let mapsShown;
@@ -316,7 +328,7 @@ async function renderMapPopularity(interaction, supabase, days = 14, mapFilter =
     );
   }
 
-  const narrative = buildChartNarrative(rows, baselineRows, mapsShown);
+  const narrative = buildChartNarrative(rows, baseline, mapsShown);
   const attachment = new AttachmentBuilder(buffer, { name: 'mapchart.png' });
   const content = narrative
     ? `\`${rows.length} rounds · all servers\`\n${narrative}`
@@ -400,6 +412,8 @@ async function renderWinRateOverTime(interaction, supabase, category, item, days
 }
 
 module.exports = {
+  // exposed for tests/mapBaseline.test.js
+  _internals: { getSixMonthBaseline, buildChartNarrative, mapShareFromCounts },
   data: new SlashCommandBuilder()
     .setName('mapchart')
     .setDescription('View map popularity or item win rate charts')
