@@ -62,7 +62,12 @@ client.once('ready', async () => {
   require('./modules/raw-data-digest')(client, { supabase });
   require('./modules/bot-logs')(client, { supabase });
   require('./modules/bot-status')(client, { supabase });
-  require('./modules/bot-errors')(client, { supabase });
+  require('./modules/bot-errors')(client, {
+    supabase,
+    // On a crash, give the ingest queues a moment to flush before exiting.
+    // Rounds are journaled to disk anyway; player rows exist only in memory.
+    beforeExit: () => Promise.all([roundQueue.shutdown(2500), playerQueue.shutdown(2500)]),
+  });
   require('./modules/rollup')(client, { supabase });
 
 });
