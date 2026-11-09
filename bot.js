@@ -430,91 +430,33 @@ const roundQueue = require('./modules/roundQueue').create({
 });
 let lastRefusalAlertAt = 0;
 
-app.post('/api/round-complete', requireIngestKey, async (req, res) => {
-  if (!req.body?.data?.Round_Map) console.log('[round-complete] Unexpected payload shape:', JSON.stringify(req.body));
-  // Support both flat payload and Logger.Send wrapper ({ level, data: { ... } })
-  const body = req.body?.data ?? req.body;
-  const {
-    Round_Result, Round_AverageLevel, Round_NumberOfPlayers, Round_Game_Mode,
-    Round_Map, Round_AtmosphereType, Round_DinoPlayerAverageLevel,
-    Round_NumPlayers_WithMedkits, Round_NumPlayers_WithToolkits, Round_NumPlayers_WithFuelcans,
-    Round_NumPlayers_WithDinoTrackers, Round_NumPlayers_WithMines, Round_NumPlayers_WithGamepassWeapons,
-    Round_DinosaursUsed, Round_VehiclesUsed, Round_WeaponsUsed,
-    Round_MVP_EquippedVehicle, Round_MVP_EquippedWeapon, Round_MVP_Damage,
-    Round_Players,
-  } = body;
+const { asyncRoute, httpErrorHandler } = require('./modules/httpErrors');
+const { normalizeRound } = require('./modules/roundPayload');
+let lastInvalidRoundAlertAt = 0;
 
-  // Analyse payload for Lua-side scripting issues before anything else
-  checkAndPostLuaError(client, req.body, body);
-
-  if (!Round_Map || !Round_Result) {
-    const errMsg = `Missing required fields — Round_Map: ${Round_Map ?? 'undefined'}, Round_Result: ${Round_Result ?? 'undefined'}`;
-    console.error('[round-complete]', errMsg);
-    postIngestionError(errMsg);
+app.post('/api/round-complete', requireIngestKey, asyncRoute(async (req, res) => {
+  // Validate everything before anything is queued: a bad payload is a bounded 400, never a half-written round.
+  const parsed = normalizeRound(req.body);
+  if (!parsed.ok) {
+    const errMsg = `Invalid round payload — ${parsed.issues.join('; ')}`;
+    console.error('[round-complete]', errMsg, '| body started:', JSON.stringify(req.body)?.slice(0, 300));
     require('./modules/bot-status').recordError(errMsg);
-    return res.status(400).json({ error: 'Missing required fields: Round_Map and Round_Result' });
-  }
-
-  const normalisedResult = (Round_Result === 'HumanEscape' || Round_Result === 'HumanWin')
-    ? 'SurvivorWin' : Round_Result;
-
-  const roundEndTime = req.body?.time
-    ? new Date(req.body.time * 1000).toISOString()
-    : new Date().toISOString();
-
-  // Sanitise numeric fields — KKG's script can send NaN (e.g. 0/0 average level)
-  // which Supabase rejects for numeric columns. Replace NaN with null.
-  // The game's JSON encoder cannot write NaN, so it sends a wrapper object instead:
-  // {"m":null,"t":"numeric","v":"nan"}. Unwrap it: a finite value becomes a number,
-  // nan/inf become null. (Left as an object the database rejects the whole round.)
-  const unwrapNum = (v) => {
-    if (v !== null && typeof v === 'object' && v.t === 'numeric') {
-      const n = (typeof v.v === 'number' || (typeof v.v === 'string' && v.v.trim() !== '')) ? Number(v.v) : NaN;
-      return Number.isFinite(n) ? n : null;
+    // At most one Discord alert per 10 minutes so a loop on the game side cannot flood the channel.
+    if (Date.now() - lastInvalidRoundAlertAt > 10 * 60_000) {
+      lastInvalidRoundAlertAt = Date.now();
+      postIngestionError(errMsg);
     }
-    return v;
-  };
-  const safeNum = (v) => { v = unwrapNum(v); return (v == null || (typeof v === 'number' && isNaN(v))) ? null : v; };
-  const safeInt = (v, fallback = 0) => { v = unwrapNum(v); return (v == null || (typeof v === 'number' && isNaN(v))) ? fallback : v; };
+    return res.status(400).json({ error: 'Invalid round payload', issues: parsed.issues });
+  }
+  const { roundRow, playerRows } = parsed;
+  if (parsed.skippedPlayers) console.log(`[round-complete] Skipped ${parsed.skippedPlayers} unusable player entr${parsed.skippedPlayers === 1 ? 'y' : 'ies'}.`);
 
-  const roundRow = {
-    played_at:    roundEndTime,
-    place_id:     req.body?.placeId ?? null,
-    round_result: normalisedResult,
-    average_level:             safeNum(Round_AverageLevel),
-    number_of_players:         safeNum(Round_NumberOfPlayers),
-    game_mode:                 Round_Game_Mode ?? null,
-    map:                       Round_Map,
-    atmosphere_type:           Round_AtmosphereType ?? null,
-    dino_player_average_level: safeNum(Round_DinoPlayerAverageLevel),
-    num_players_with_medkits:      safeInt(Round_NumPlayers_WithMedkits),
-    num_players_with_toolkits:     safeInt(Round_NumPlayers_WithToolkits),
-    num_players_with_fuelcans:     safeInt(Round_NumPlayers_WithFuelcans),
-    num_players_with_dinotrackers: safeInt(Round_NumPlayers_WithDinoTrackers),
-    num_players_with_mines:        safeInt(Round_NumPlayers_WithMines),
-    num_players_with_gamepass_weapons: safeInt(Round_NumPlayers_WithGamepassWeapons),
-    dinosaurs_used: Array.isArray(Round_DinosaursUsed) ? Round_DinosaursUsed : (Round_DinosaursUsed ? [Round_DinosaursUsed] : null),
-    vehicles_used: Array.isArray(Round_VehiclesUsed) ? Round_VehiclesUsed : null,
-    weapons_used:  Array.isArray(Round_WeaponsUsed)  ? Round_WeaponsUsed  : null,
-    mvp_equipped_vehicle: Round_MVP_EquippedVehicle ?? null,
-    mvp_equipped_weapon:  Round_MVP_EquippedWeapon  ?? null,
-    mvp_damage:           safeNum(Round_MVP_Damage),
-  };
-
-  // ── Per-player rows (duration, platform, role, respawns) ───────────────────
-  // The queue attaches the round's id once the round is written. A failure here
-  // never fails or repeats the round log.
-  const playerRows = Array.isArray(Round_Players)
-    ? Round_Players.map(p => ({
-        roblox_user_id:   String(p.UserId ?? p.RobloxUserId ?? ''),
-        platform:         p.Platform ?? null,
-        touch_enabled:    typeof p.TouchEnabled === 'boolean' ? p.TouchEnabled : null,
-        preferred_input:  p.PreferredInput ?? null,
-        duration_seconds: safeNum(p.DurationSeconds),
-        role:             p.Role ?? null,
-        respawn_count:    safeInt(p.RespawnCount, null),
-      })).filter(p => p.roblox_user_id)
-    : [];
+  // Analyse payload for Lua-side scripting issues (best effort; never blocks the round)
+  try {
+    checkAndPostLuaError(client, req.body, req.body.data ?? req.body);
+  } catch (err) {
+    console.error('[round-complete] Lua check failed:', err.message);
+  }
 
   // Hand the round to the durable queue. It is journaled to disk before we answer,
   // written to Supabase one round at a time, and retried until it lands, so a busy
@@ -533,7 +475,7 @@ app.post('/api/round-complete', requireIngestKey, async (req, res) => {
   }
 
   res.json({ received: true, queued: true });
-});
+}));
 
 // ── Player data ─────────────────────────────────────────────────────────────
 // Per-player events the game sends as their own payload (e.g. a player leaving,
@@ -571,6 +513,9 @@ app.post('/api/player-data', requireIngestKey, (req, res) => {
   // Partly usable payloads are accepted; the rejected entries are listed so the sender can see them.
   res.json({ received: true, accepted: rows.length, rejected: rejected.length, ...(rejected.length ? { rejectedEntries: rejected.slice(0, 10) } : {}) });
 });
+
+// Last in the chain: body-parser errors and rejected async handlers become short JSON answers.
+app.use(httpErrorHandler);
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
