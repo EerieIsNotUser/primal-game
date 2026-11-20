@@ -92,7 +92,7 @@ const tierlist = require('../commands/tierlist');
   };
   const names = c => c.data.toJSON().options.map(o => o.name);
   assert.deepEqual(names(gamestats), ['lobby', 'time_range', 'lobby_size', 'min_level', 'max_level']);
-  assert.deepEqual(names(tierlist), ['lobby', 'time_range']);
+  assert.deepEqual(names(tierlist), ['lobby', 'time_range', 'category', 'lobby_size']);
   assert.ok(gamestats.data.toJSON().options.find(o => o.name === 'time_range').choices.some(c => c.value === '24h'), '24 hour filter is offered');
 
   // gamestats: defers first, then one reply holding both pictures
@@ -120,12 +120,18 @@ const tierlist = require('../commands/tierlist');
   console.error = logged;
   assert.match(i4.sent[1], /Something went wrong/);
 
-  // tierlist: one picture, defaults to the main game and the past week
+  // tierlist: all three tier lists in one message by default, main game and past week
   asked = [];
   const i5 = interaction({});
   await tierlist.execute(i5, { fetchImage: async p => { asked.push(p); return png; } });
-  assert.deepEqual(asked, [{ kind: 'popular', lobby: 'main', range: '7d' }]);
-  assert.equal(i5.sent[1].files.length, 1);
+  assert.deepEqual(asked.map(p => p.kind), ['tiers_dino', 'tiers_weapon', 'tiers_vehicle']);
+  assert.deepEqual([asked[0].lobby, asked[0].range, asked[0].size], ['main', '7d', 'all']);
+  assert.equal(i5.sent.length, 2); assert.equal(i5.sent[1].files.length, 3);
+  asked = [];
+  const i6 = interaction({ category: 'weapon', lobby: 'pro', time_range: '30d', lobby_size: 'standard' });
+  await tierlist.execute(i6, { fetchImage: async p => { asked.push(p); return png; } });
+  assert.deepEqual(asked, [{ kind: 'tiers_weapon', lobby: 'pro', range: '30d', size: 'standard' }]);
+  assert.equal(i6.sent[1].files.length, 1);
 
   console.log('siteImage: ok');
 })().catch(e => { console.error(e); process.exit(1); });
