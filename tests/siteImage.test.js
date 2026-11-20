@@ -6,6 +6,7 @@ const { init, buildUrl, fetchImage, signParams, canonical, grainFor, SiteImageEr
 const gamestats = require('../commands/gamestats');
 const tierlist = require('../commands/tierlist');
 const winrate = require('../commands/winrate');
+const mapchart = require('../commands/mapchart');
 
 (async () => {
   const NOW = Date.parse('2026-11-20T20:30:00Z');
@@ -164,6 +165,21 @@ const winrate = require('../commands/winrate');
   console.error = logged2;
   assert.deepEqual(a3.out, [], 'a database error gives an empty list, not a crash');
   winrate._resetNames();
+
+  // mapchart: one maps picture, main game and past month by default, level limits do not exist
+  assert.deepEqual(names(mapchart), ['lobby', 'time_range', 'lobby_size']);
+  assert.ok(!mapchart.data.toJSON().options.find(o => o.name === 'time_range').choices.some(c => c.value === '24h'), 'maps view has no 24h option');
+  asked = [];
+  const i10 = interaction({});
+  await mapchart.execute(i10, { fetchImage: async p => { asked.push(p); return png; } });
+  assert.deepEqual(asked, [{ kind: 'maps', lobby: 'main', range: '30d', size: 'all' }]);
+  assert.equal(i10.sent[1].files.length, 1);
+  asked = [];
+  await mapchart.execute(interaction({ lobby: 'pro', time_range: 'all', lobby_size: 'pro' }), { fetchImage: async p => { asked.push(p); return png; } });
+  assert.deepEqual(asked, [{ kind: 'maps', lobby: 'pro', range: 'all', size: 'pro' }]);
+  const i11 = interaction({});
+  await mapchart.execute(i11, { fetchImage: async () => { throw new SiteImageError('x', { status: 404, userMessage: 'No rounds match that selection.' }); } });
+  assert.equal(i11.sent[1], 'No rounds match that selection.');
 
   console.log('siteImage: ok');
 })().catch(e => { console.error(e); process.exit(1); });

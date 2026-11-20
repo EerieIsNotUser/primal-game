@@ -1,497 +1,59 @@
-const {
-  SlashCommandBuilder,
-  AttachmentBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  StringSelectMenuBuilder,
-} = require('discord.js');
-const { readPaged } = require('../modules/readPaged');
-const { buildLineChartImage, buildDualAxisChartImage, bucketRoundsByMap, MAP_COLORS } = require('../modules/chart');
+'use strict';
+const { SlashCommandBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { fetchImage, SiteImageError } = require('../modules/siteImage');
 
-// ─── /mapchart ───────────────────────────────────────────────────────────
-// Two chart types, switchable via dropdown:
-//   1. Map Popularity (original behavior) — round counts per map over time
-//   2. Win Rate Over Time — a specific dino/vehicle/weapon's win rate
-//      trend, bucketed monthly. Requires category + item + month range,
-//      selected via follow-up dropdowns after picking this chart type.
-//
-// Caveat carried over from /winrate: vehicle/weapon "win rate" is an
-// MVP-correlation proxy, not true per-item usage win rate. Dino category
-// is a placeholder pending KKG (no dino field in current schema).
+// ─── /mapchart ────────────────────────────────────────────────────────────────
+// Every map: how many rounds it gets, the dino win rate on it with a 95% range, and each map's dino win rate day by day.
+// The picture is drawn by the website (/api/bot/image, kind "maps") from the same daily totals as its Maps page.
+// An item's win rate over time is now /winrate.
 
-const VEHICLES = ['ATV', 'Golf Cart', 'Jeep', 'Hypercar', 'Pickup Truck', 'Police Car', 'Pumpkin Wagon', 'Buggy', 'Hybrid', 'Banana Car', 'Go-Kart', 'Bush Car', 'Muscle Car', 'Ambulance', 'Tow Truck', 'MRAP', 'Warthod', 'The Hornet', 'Humvee', 'Cyber-Beast', 'Monster Truck', 'Scrapper', 'Lunar Rover'];
-const WEAPONS = ['Pistol', 'Shotgun', 'MP5', 'Light Sniper', 'AR-15', 'AK-47', 'Crossbow', 'Heavy Sniper', 'AR-Dino', 'AR-Uni', 'P90', 'Water Gun', 'Raygun', 'Scar', 'Trike Shotgun', 'Minigun', 'IWS 2000', 'LMG', 'Deagle', 'Railgun', 'Plasma Rifle', 'Flamethrower', 'Tri-Beam', 'Scrapyard Shotgun', 'SPAS-12'];
-
-const WIN_RATE_DAYS = [
-  { label: 'Past 7 Days',  value: '7'  },
-  { label: 'Past 14 Days', value: '14' },
-  { label: 'Past 30 Days', value: '30' },
-  { label: 'Past 90 Days', value: '90' },
+const LOBBIES = [
+  { name: 'Main Game',         value: 'main'     },
+  { name: 'Pro Lobbies',       value: 'pro'      },
+  { name: 'Training Lobbies',  value: 'training' },
+  { name: 'All (no Training)', value: 'all'      },
+];
+// Daily totals, so the shortest period is a week.
+const RANGES = [
+  { name: 'Past week',    value: '7d'   },
+  { name: 'Past month',   value: '30d'  },
+  { name: 'Past 90 days', value: '90d'  },
+  { name: 'Past year',    value: '365d' },
+  { name: 'All time',     value: 'all'  },
+];
+const SIZES = [
+  { name: 'Beginner lobbies (level 1–40)',   value: 'beginner' },
+  { name: 'Standard lobbies (level 41–250)', value: 'standard' },
+  { name: 'Pro-level lobbies (level 251+)',  value: 'pro'      },
 ];
 
-function buildDaysButtonRow(activeDays) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('mapchart_days_1')
-      .setLabel('1d')
-      .setStyle(activeDays === 1 ? ButtonStyle.Primary : ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId('mapchart_days_7')
-      .setLabel('7d')
-      .setStyle(activeDays === 7 ? ButtonStyle.Primary : ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId('mapchart_days_14')
-      .setLabel('14d')
-      .setStyle(activeDays === 14 ? ButtonStyle.Primary : ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId('mapchart_days_30')
-      .setLabel('30d')
-      .setStyle(activeDays === 30 ? ButtonStyle.Primary : ButtonStyle.Secondary),
-  );
-}
-
-// In-memory session store for the multi-step component flow, keyed by
-// the original interaction's message ID. Cleared after 5 minutes.
-const sessions = new Map();
-function setSession(messageId, data) {
-  sessions.set(messageId, data);
-  setTimeout(() => sessions.delete(messageId), 5 * 60 * 1000);
-}
-
-function buildTypeSelectRow() {
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('mapchart_type_select')
-      .setPlaceholder('Choose a chart type')
-      .addOptions(
-        { label: 'Map Popularity', value: 'map_popularity', description: 'Round counts per map over time', default: true },
-        { label: 'Win Rate Over Time', value: 'win_rate', description: 'A specific item\'s win rate trend' },
-      )
-  );
-}
-
-function buildCategorySelectRow() {
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('mapchart_category_select')
-      .setPlaceholder('Choose a category')
-      .addOptions(
-        { label: 'Vehicle', value: 'vehicle' },
-        { label: 'Weapon', value: 'weapon' },
-        { label: 'Dino (placeholder — no data yet)', value: 'dino' },
-      )
-  );
-}
-
-function buildItemSelectRow(category) {
-  const pool = category === 'vehicle' ? VEHICLES : category === 'weapon' ? WEAPONS : [];
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('mapchart_item_select')
-      .setPlaceholder('Choose an item')
-      .addOptions(pool.slice(0, 25).map(name => ({ label: name, value: name })))
-  );
-}
-
-function buildWinRateDaysSelectRow() {
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId('mapchart_range_select')
-      .setPlaceholder('Choose a time range')
-      .addOptions(WIN_RATE_DAYS.map(r => ({ label: r.label, value: r.value })))
-  );
-}
-
-// Bucket round_logs rows into daily win-rate values for a single item.
-function bucketWinRateByDay(rows, days) {
-  const now = Date.now();
-  const buckets = [];
-
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(now - i * 24 * 60 * 60 * 1000);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const label = `${d.getMonth() + 1}/${d.getDate()}`;
-    buckets.push({ key, label, wins: 0, total: 0 });
-  }
-
-  const bucketMap = new Map(buckets.map(b => [b.key, b]));
-
-  for (const row of rows) {
-    const d = new Date(row.played_at);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const bucket = bucketMap.get(key);
-    if (!bucket) continue;
-    bucket.total++;
-    if (row.round_result === 'SurvivorWin') bucket.wins++;
-  }
-
-  const labels = buckets.map(b => b.label);
-  const data = buckets.map(b => (b.total > 0 ? Math.round((b.wins / b.total) * 100) : 0));
-  return { labels, data };
-}
-
-// The six-month map baseline: how many rounds each map had, as { counts: Map(map -> rounds), total }.
-//
-// It used to read every round of the last six months from round_logs (about 3.8 million rows at the time of writing) in
-// one request. The API cuts a request at its row cap without saying so, so the shares came from an arbitrary slice of the
-// rows (and a full scan takes longer than the anon role's 3 second limit). Now it reads the maintained per-day counters
-// (map_daily_stats, one row per map and day, the same rounds with the same excluded place) and adds the rolled-up days
-// from round_stats_daily older than the retention window, as before. The only difference is the first day: counters are
-// per whole day, so the window starts at the start of that day instead of at the exact time six months ago.
-// Every read is paged with a unique order; if a read fails or hits the safety stop the baseline is skipped (null)
-// rather than shown from partial data.
-async function getSixMonthBaseline(supabase, { read = readPaged, now = Date.now() } = {}) {
-  const sixMonthCutoff = new Date(now);
-  sixMonthCutoff.setMonth(sixMonthCutoff.getMonth() - 6);
-  const cutoffDay = sixMonthCutoff.toISOString().slice(0, 10);
-  const retentionDay = new Date(now - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
-  const counters = await read(() => supabase
-    .from('map_daily_stats').select('map, day, total')
-    .gte('day', cutoffDay)
-    .order('day', { ascending: true }).order('map', { ascending: true }));
-  if (counters.error || counters.truncated) return null;
-
-  // Aggregate rows older than the retention window (several rows per day and map, so the row id breaks ties)
-  const rolled = await read(() => supabase
-    .from('round_stats_daily').select('id, map, dino_wins, survivor_wins')
-    .gte('day', cutoffDay)
-    .lt('day', retentionDay)
-    .order('id', { ascending: true }));
-  if (rolled.error || rolled.truncated) return null;
-
-  const counts = new Map();
-  let total = 0;
-  const add = (map, n) => {
-    n = Number(n) || 0;
-    total += n;
-    if (map) counts.set(map, (counts.get(map) || 0) + n);
-  };
-  for (const r of counters.rows) add(r.map, r.total);
-  for (const r of rolled.rows) add(r.map, (r.dino_wins || 0) + (r.survivor_wins || 0));
-  return { counts, total };
-}
-
-// map -> share of all rounds, from a list of rounds
-function mapShareOf(rows) {
-  const counts = new Map();
-  for (const row of rows) {
-    if (!row.map) continue;
-    counts.set(row.map, (counts.get(row.map) || 0) + 1);
-  }
-  return mapShareFromCounts(counts, rows.length);
-}
-
-// map -> share of all rounds, from counts per map and the total
-function mapShareFromCounts(counts, total) {
-  const shares = new Map();
-  for (const [map, count] of counts) {
-    shares.set(map, total > 0 ? count / total : 0);
-  }
-  return shares;
-}
-
-function winRateByMap(rows) {
-  const byMap = new Map(); // map -> { dinoWins, survivorWins, total }
-  for (const row of rows) {
-    if (!row.map) continue;
-    if (!byMap.has(row.map)) byMap.set(row.map, { dinoWins: 0, survivorWins: 0, total: 0 });
-    const m = byMap.get(row.map);
-    m.total++;
-    if (row.round_result === 'DinoWin') m.dinoWins++;
-    if (row.round_result === 'SurvivorWin') m.survivorWins++;
-  }
-  return byMap;
-}
-
-// Build the narrative message: popularity shifts (vs 6-month baseline) +
-// per-map dino/survivor win rates for the selected window.
-function buildChartNarrative(selectedRows, baseline, mapsShown) {
-  const lines = [];
-
-  // Popularity shift detection (only for maps actually shown in the chart)
-  if (baseline && baseline.total > 0) {
-    const selectedShare = mapShareOf(selectedRows);
-    const baselineShare = mapShareFromCounts(baseline.counts, baseline.total);
-
-    const shifts = [];
-    for (const map of mapsShown) {
-      const sel = (selectedShare.get(map) || 0) * 100;
-      const base = (baselineShare.get(map) || 0) * 100;
-      const delta = sel - base;
-      if (Math.abs(delta) >= 8) { // threshold: 8 percentage points
-        shifts.push({ map, delta, sel, base });
-      }
-    }
-    shifts.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-
-    if (shifts.length > 0) {
-      const shiftLines = shifts.slice(0, 3).map(s =>
-        `${s.map} is ${s.delta > 0 ? 'up' : 'down'} ${Math.abs(s.delta).toFixed(0)} pts vs its 6-month average (${s.base.toFixed(0)}% → ${s.sel.toFixed(0)}%)`
-      );
-      lines.push(`📊 Noticeable shift: ${shiftLines.join('; ')}.`);
-    } else {
-      lines.push(`📊 No noticeable popularity shift vs the 6-month average.`);
-    }
-  }
-
-  // Win rate per map (Dino vs Survivor), for the selected window only
-  const winRates = winRateByMap(selectedRows);
-  const winRateLines = mapsShown
-    .filter(map => winRates.has(map))
-    .map(map => {
-      const w = winRates.get(map);
-      const dinoPct = w.total > 0 ? Math.round((w.dinoWins / w.total) * 100) : 0;
-      const survivorPct = w.total > 0 ? Math.round((w.survivorWins / w.total) * 100) : 0;
-      return `${map}: Dino ${dinoPct}% / Survivor ${survivorPct}%`;
-    });
-
-  if (winRateLines.length > 0) {
-    lines.push(`⚔️ Win rate: ${winRateLines.join(' · ')}.`);
-  }
-
-  return lines.join('\n');
-}
-
-async function renderMapPopularity(interaction, supabase, days = 14, mapFilter = null) {
-  const endDate   = new Date();
-  const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const bucketMs  = days <= 1 ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000; // hourly for 1d, daily otherwise
-
-  const { data: rows, error } = await supabase
-    .from('round_logs')
-    .select('map, played_at, round_result')
-    .gte('played_at', startDate.toISOString())
-    .lte('played_at', endDate.toISOString())
-    .neq('place_id', '100026158235338');
-
-  if (error) return interaction.editReply('❌ Something went wrong fetching round data.');
-  if (!rows || rows.length === 0) return interaction.editReply(`No round data found for the past ${days} days.`);
-
-  const { labels, series } = bucketRoundsByMap(rows, startDate, endDate, bucketMs);
-  if (series.length === 0) return interaction.editReply('No map data available to chart.');
-
-  const baseline = await getSixMonthBaseline(supabase);
-
-  let buffer;
-  let mapsShown;
-  let cardTitle;
-  const CORNER_ORDER = ['tl', 'tr', 'bl', 'br'];
-
-  if (mapFilter) {
-    const mapSeries = series.find(s => s.label.toLowerCase() === mapFilter.toLowerCase());
-    if (!mapSeries) return interaction.editReply(`No data found for map "${mapFilter}".`);
-
-    mapsShown = [mapSeries.label];
-    cardTitle = `${mapSeries.label} — Round Count`;
-    const accentColor = MAP_COLORS[mapSeries.label] ?? '#5865F2';
-
-    buffer = await buildLineChartImage(
-      labels,
-      [{ label: mapSeries.label, data: mapSeries.data, color: accentColor }],
-      null,
-      {
-        title:         cardTitle,
-        subtitle:      `Primal Pursuit · Past ${days} Days`,
-        stats:         [{ label: 'Total Rounds', value: rows.length.toLocaleString(), color: '#5865F2' }],
-        lookback:      `Past ${days} Days`,
-        accentColor,
-        ambientColors: [{ color: accentColor, corner: 'tl' }, { color: accentColor, corner: 'bl' }],
-      }
-    );
-  } else {
-    mapsShown = series.map(s => s.label);
-    const coloredSeries   = series.map(s => ({ ...s, color: MAP_COLORS[s.label] ?? s.color }));
-    const dominantAccent  = MAP_COLORS[mapsShown[0]] ?? '#5865F2';
-    const mapCornerColors = mapsShown.slice(0, 4).map((map, i) => ({
-      color:  MAP_COLORS[map] ?? '#5865F2',
-      corner: CORNER_ORDER[i],
-    }));
-    cardTitle = 'Map Popularity';
-
-    buffer = await buildLineChartImage(
-      labels,
-      coloredSeries,
-      null,
-      {
-        title:         cardTitle,
-        subtitle:      `Primal Pursuit · Past ${days} Days`,
-        stats: [
-          { label: 'Total Rounds', value: rows.length.toLocaleString(), color: '#5865F2' },
-          { label: 'Maps',         value: mapsShown.length.toString(),  color: '#57F287' },
-        ],
-        lookback:      `Past ${days} Days`,
-        accentColor:   dominantAccent,
-        ambientColors: mapCornerColors,
-      }
-    );
-  }
-
-  const narrative = buildChartNarrative(rows, baseline, mapsShown);
-  const attachment = new AttachmentBuilder(buffer, { name: 'mapchart.png' });
-  const content = narrative
-    ? `\`${rows.length} rounds · all servers\`\n${narrative}`
-    : `\`${rows.length} rounds · all servers\``;
-
-  return interaction.editReply({ content, files: [attachment], components: [buildDaysButtonRow(days), buildTypeSelectRow()] });
-}
-
-async function renderWinRateOverTime(interaction, supabase, category, item, days) {
-  if (category === 'dino') {
-    return interaction.editReply({
-      content: `❌ Dino win rate isn't available yet — no dino tracking exists in the current data. Flagged for KKG.`,
-      embeds: [], files: [], components: [buildTypeSelectRow()],
-    });
-  }
-
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const cutoffISO = cutoff.toISOString();
-
-  // Fetch item-specific rows (for win rate line)
-  let itemQuery = supabase.from('round_logs').select('round_result, played_at')
-    .gte('played_at', cutoffISO)
-    .neq('place_id', '100026158235338');
-  itemQuery = category === 'vehicle' ? itemQuery.eq('mvp_equipped_vehicle', item) : itemQuery.eq('mvp_equipped_weapon', item);
-
-  // Fetch all rounds in window (for total volume bars)
-  const [{ data: itemRows, error: itemErr }, { data: allRows, error: allErr }] = await Promise.all([
-    itemQuery,
-    supabase.from('round_logs').select('played_at').gte('played_at', cutoffISO).neq('place_id', '100026158235338'),
-  ]);
-
-  if (itemErr || allErr) return interaction.editReply('❌ Something went wrong fetching round data.');
-  if (!itemRows || itemRows.length === 0) {
-    return interaction.editReply({
-      content: `No rounds found for **${item}** in the selected range.`,
-      embeds: [], files: [], components: [buildTypeSelectRow()],
-    });
-  }
-
-  const { labels, data: winRateData } = bucketWinRateByDay(itemRows, days);
-
-  // Bucket all rounds into daily totals for bar series
-  const totalByDay = new Array(days).fill(0);
-  const startMs = cutoff.getTime();
-  for (const row of (allRows ?? [])) {
-    const idx = Math.floor((new Date(row.played_at).getTime() - startMs) / (24 * 60 * 60 * 1000));
-    if (idx >= 0 && idx < days) totalByDay[idx]++;
-  }
-
-  const catLabel = category === 'vehicle' ? 'Vehicle' : 'Weapon';
-  const lineColor = category === 'vehicle' ? '#5865F2' : '#ED4245';
-
-  const buffer = await buildDualAxisChartImage(
-    labels,
-    totalByDay,
-    'Total Rounds (All)',
-    [{ label: `${item} Surv. Win %`, data: winRateData, color: lineColor }],
-    null,
-    {
-      title:         `${item} — Win Rate Over Time`,
-      subtitle:      `Primal Pursuit · ${catLabel} · Past ${days} Days`,
-      stats: [
-        { label: 'MVP Rounds',   value: itemRows.length.toLocaleString(),        color: lineColor  },
-        { label: 'Total Rounds', value: (allRows?.length ?? 0).toLocaleString(), color: '#5865F2' },
-      ],
-      lookback:      `Past ${days} Days`,
-      accentColor:   lineColor,
-      ambientColors: [
-        { color: lineColor, corner: 'tl' },
-        { color: lineColor, corner: 'bl' },
-      ],
-    }
-  );
-
-  const attachment = new AttachmentBuilder(buffer, { name: 'winratechart.png' });
-  return interaction.editReply({
-    content: `\`${itemRows.length} MVP rounds · MVP-correlation proxy\``,
-    files: [attachment],
-    components: [buildTypeSelectRow()],
-  });
-}
+const ANALYTICS_URL = `${(process.env.WEBSITE_URL || 'https://www.primalpursuitrblx.com').replace(/\/+$/, '')}/dashboard/maps`;
+const linkRow = () => new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Open maps page').setStyle(ButtonStyle.Link).setURL(ANALYTICS_URL));
 
 module.exports = {
-  // exposed for tests/mapBaseline.test.js
-  _internals: { getSixMonthBaseline, buildChartNarrative, mapShareFromCounts },
   data: new SlashCommandBuilder()
     .setName('mapchart')
-    .setDescription('View map popularity or item win rate charts')
-    .addIntegerOption(opt =>
-      opt.setName('days')
-        .setDescription('Days to look back for Map Popularity view (default 14)')
-        .setMinValue(1)
-        .setMaxValue(90)
-        .setRequired(false)
-    )
-    .addStringOption(opt =>
-      opt.setName('map')
-        .setDescription('Single map — shows dual-axis chart vs total rounds (default: all maps overlaid)')
-        .setRequired(false)
-    ),
+    .setDescription('How often each map is played and who wins on it')
+    .addStringOption(opt => opt.setName('lobby').setDescription('Lobby type (default: Main Game)').addChoices(...LOBBIES))
+    .addStringOption(opt => opt.setName('time_range').setDescription('Time period (default: past month)').addChoices(...RANGES))
+    .addStringOption(opt => opt.setName('lobby_size').setDescription('Only rounds from lobbies of this average level').addChoices(...SIZES)),
 
-  async execute(interaction, { supabase }) {
+  async execute(interaction, deps = {}) {
+    const get = deps.fetchImage ?? fetchImage;
     await interaction.deferReply();
-    const days = interaction.options.getInteger('days') ?? 7;
-    const mapFilter = interaction.options.getString('map');
-
-    await renderMapPopularity(interaction, supabase, days, mapFilter);
-
-    const reply = await interaction.fetchReply();
-    setSession(reply.id, { supabase, days, mapFilter, step: 'type' });
-  },
-
-  // Component interaction handler — registered separately in bot.js
-  async handleComponent(interaction, { supabase }) {
-    const session = sessions.get(interaction.message.id) ?? { supabase, days: 14 };
-
-    if (interaction.customId.startsWith('mapchart_days_')) {
-      const days = parseInt(interaction.customId.replace('mapchart_days_', ''), 10);
-      session.days = days;
-      setSession(interaction.message.id, session);
-      await interaction.deferUpdate();
-      return renderMapPopularity(interaction, supabase, days, session.mapFilter ?? null);
-    }
-
-    if (interaction.customId === 'mapchart_type_select') {
-      const type = interaction.values[0];
-      if (type === 'map_popularity') {
-        await interaction.deferUpdate();
-        return renderMapPopularity(interaction, supabase, session.days, session.mapFilter);
-      }
-      // win_rate selected — show category picker next
-      session.step = 'category';
-      setSession(interaction.message.id, session);
-      return interaction.update({ content: 'Choose a category:', embeds: [], files: [], components: [buildCategorySelectRow()] });
-    }
-
-    if (interaction.customId === 'mapchart_category_select') {
-      const category = interaction.values[0];
-      session.category = category;
-      session.step = 'item';
-      setSession(interaction.message.id, session);
-
-      if (category === 'dino') {
-        return interaction.update({
-          content: `❌ Dino win rate isn't available yet — no dino tracking exists in the current data.`,
-          embeds: [], files: [], components: [buildTypeSelectRow()],
-        });
-      }
-
-      return interaction.update({ content: 'Choose an item:', embeds: [], files: [], components: [buildItemSelectRow(category)] });
-    }
-
-    if (interaction.customId === 'mapchart_item_select') {
-      session.item = interaction.values[0];
-      session.step = 'range';
-      setSession(interaction.message.id, session);
-      return interaction.update({ content: 'Choose a time range:', embeds: [], files: [], components: [buildWinRateDaysSelectRow()] });
-    }
-
-    if (interaction.customId === 'mapchart_range_select') {
-      const days = parseInt(interaction.values[0], 10);
-      await interaction.deferUpdate();
-      return renderWinRateOverTime(interaction, supabase, session.category, session.item, days);
+    const o = interaction.options;
+    const p = {
+      kind: 'maps',
+      lobby: o.getString('lobby') ?? 'main',
+      range: o.getString('time_range') ?? '30d',
+      size: o.getString('lobby_size') ?? 'all',
+    };
+    try {
+      const png = await get(p);
+      return await interaction.editReply({ files: [new AttachmentBuilder(png, { name: 'mapchart.png' })], components: [linkRow()] });
+    } catch (err) {
+      if (!(err instanceof SiteImageError) || err.status >= 500 || err.status === 0 || err.status === 401) console.error('[mapchart]', err.message);
+      return interaction.editReply(err instanceof SiteImageError ? err.userMessage : 'Something went wrong drawing that.');
     }
   },
 };
