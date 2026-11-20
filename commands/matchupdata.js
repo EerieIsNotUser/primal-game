@@ -1,57 +1,23 @@
-const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
-const chrono = require('chrono-node');
-const { postMatchupData } = require('../modules/matchupdata-digest');
+'use strict';
+const { SlashCommandBuilder } = require('discord.js');
+const { LOBBIES, RANGES, reply } = require('../modules/imageCommand');
 
 // ─── /matchupdata ─────────────────────────────────────────────────────────────
-// Manual trigger for matchup data with optional date range.
-
-function parseDateRange(text) {
-  const results = chrono.parse(text, new Date());
-  if (results.length === 0) return null;
-  const result    = results[0];
-  const startDate = result.start ? result.start.date() : null;
-  const endDate   = result.end   ? result.end.date()   : (result.start ? result.start.date() : null);
-  if (!startDate) return null;
-  return { startDate, endDate: endDate ?? startDate };
-}
+// What each map sees most of: the most common dinosaurs, MVP weapons and MVP vehicles on every map, as a share of that map's rounds.
+// Counts every round from the daily totals (the old version read raw rounds through a 1,000 row cap). Dates are the usual choices
+// now, not free text.
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('matchupdata')
-    .setDescription('View matchup data — most common guns, cars and dinos per map')
-    .addStringOption(opt =>
-      opt.setName('dates')
-        .setDescription('Date range e.g. "January 15th through May 30th" (default: past 7 days)')
-        .setRequired(false)
-    ),
+    .setDescription('The most common dinosaurs, weapons and vehicles on each map')
+    .addStringOption(o => o.setName('lobby').setDescription('Lobby type (default: Main Game)').addChoices(...LOBBIES))
+    .addStringOption(o => o.setName('time_range').setDescription('Time period (default: past week)').addChoices(...RANGES)),
 
-  async execute(interaction, { supabase }) {
+  async execute(interaction, deps = {}) {
     await interaction.deferReply();
-
-    const datesInput = interaction.options.getString('dates');
-    let overrideDates = null;
-
-    if (datesInput) {
-      const parsed = parseDateRange(datesInput);
-      if (!parsed) {
-        return interaction.editReply(
-          `❌ Couldn't understand "${datesInput}". Try something like "January 15th through May 30th" or "last 30 days".`
-        );
-      }
-      overrideDates = parsed;
-    } else {
-      overrideDates = {
-        startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-        endDate:   new Date(),
-      };
-    }
-
-    const success = await postMatchupData(interaction.client, supabase, overrideDates);
-
-    if (!success) {
-      return interaction.editReply('No round data found for the selected date range.');
-    }
-
-    return interaction.deleteReply().catch(() => {});
+    const o = interaction.options;
+    const params = { kind: 'matchups', lobby: o.getString('lobby') ?? 'main', range: o.getString('time_range') ?? '7d', size: 'all' };
+    return reply(interaction, deps, { params, file: 'matchups.png', label: 'Open matchups', path: '/dashboard/matchups', tag: 'matchupdata' });
   },
 };

@@ -8,6 +8,9 @@ const tierlist = require('../commands/tierlist');
 const winrate = require('../commands/winrate');
 const mapchart = require('../commands/mapchart');
 const status = require('../commands/ping');
+const breakdown = require('../commands/breakdown');
+const peaktimes = require('../commands/peaktimes');
+const matchupdata = require('../commands/matchupdata');
 
 (async () => {
   const NOW = Date.parse('2026-11-20T20:30:00Z');
@@ -194,6 +197,27 @@ const status = require('../commands/ping');
   const si3 = { ...si, sent: [], deferred: false };
   await status.execute(si3, {}, { getSecret: async () => { throw new Error('no key'); }, fetchImpl: async () => ({ ok: true }) });
   assert.match(si3.sent[0], /Database: not connected/); assert.match(si3.sent[0], /Picture service: no key/);
+
+  // breakdown: each split asks for its own picture; peaktimes and matchupdata ask for theirs and never send a lobby size
+  assert.deepEqual(names(breakdown), ['by', 'lobby', 'time_range', 'lobby_size']);
+  assert.ok(breakdown.data.toJSON().options[0].required, 'the split is required');
+  for (const [by, kind] of [['level', 'ladder'], ['mode', 'modes'], ['lobby', 'lobbies']]) {
+    asked = [];
+    const bi = interaction({ by }); await breakdown.execute(bi, { fetchImage: async p => { asked.push(p); return png; } });
+    assert.deepEqual(asked, [{ kind, lobby: 'main', range: '30d', size: 'all' }]); assert.equal(bi.sent[1].files.length, 1);
+  }
+  asked = [];
+  await breakdown.execute(interaction({ by: 'level', lobby: 'pro', time_range: '90d', lobby_size: 'standard' }), { fetchImage: async p => { asked.push(p); return png; } });
+  assert.deepEqual(asked, [{ kind: 'ladder', lobby: 'pro', range: '90d', size: 'standard' }]);
+  assert.deepEqual(names(peaktimes), ['lobby', 'time_range']); assert.deepEqual(names(matchupdata), ['lobby', 'time_range']);
+  assert.ok(![peaktimes, matchupdata].some(c => c.data.toJSON().options.find(o => o.name === 'time_range').choices.some(x => x.value === '24h')), 'no 24h option');
+  asked = [];
+  await peaktimes.execute(interaction({}), { fetchImage: async p => { asked.push(p); return png; } });
+  await matchupdata.execute(interaction({ lobby: 'pro' }), { fetchImage: async p => { asked.push(p); return png; } });
+  assert.deepEqual(asked, [{ kind: 'peak', lobby: 'main', range: '30d', size: 'all' }, { kind: 'matchups', lobby: 'pro', range: '7d', size: 'all' }]);
+  const bi2 = interaction({ by: 'mode' });
+  await breakdown.execute(bi2, { fetchImage: async () => { throw new SiteImageError('x', { status: 404, userMessage: 'No rounds match that selection.' }); } });
+  assert.equal(bi2.sent[1], 'No rounds match that selection.');
 
   console.log('siteImage: ok');
 })().catch(e => { console.error(e); process.exit(1); });
