@@ -2,7 +2,7 @@
 // Signed picture requests and the two commands built on them, with the network and Discord faked.
 // Run: node tests/siteImage.test.js
 const assert = require('assert');
-const { deriveSecret, buildUrl, fetchImage, signParams, canonical, grainFor, SiteImageError, startKeepWarm } = require('../modules/siteImage');
+const { init, buildUrl, fetchImage, signParams, canonical, grainFor, SiteImageError, startKeepWarm } = require('../modules/siteImage');
 const gamestats = require('../commands/gamestats');
 const tierlist = require('../commands/tierlist');
 
@@ -44,13 +44,40 @@ const tierlist = require('../commands/tierlist');
   await assert.rejects(fetchImage({ kind: 'overview' }, { ...opts, fetchImpl: async () => { n++; return { ok: false, status: 404, json: async () => ({}) }; } }));
   assert.equal(n, 1, 'a 404 is not retried');
 
+  // ── signing key: made at start, written to the database, used for every request ──
+  const rows = [];
+  const fakeDb = { from: t => ({ upsert: async r => { assert.equal(t, 'bot_image_key'); rows.push(r); return { error: null }; } }) };
+  await init(fakeDb);
+  assert.equal(rows.length, 1); assert.equal(rows[0].id, 1); assert.match(rows[0].key, /^[0-9a-f]{64}$/);
+  const seen = [];
+  const okFetch = async u => { seen.push(new URL(u)); return { ok: true, status: 200, arrayBuffer: async () => png }; };
+  await fetchImage({ kind: 'overview' }, { fetchImpl: okFetch });
+  const q = Object.fromEntries(seen[0].searchParams);
+  assert.equal(q.s, signParams(rows[0].key, q), 'requests are signed with the key that was published');
+  // A refused signature writes the key again and tries once more, then succeeds.
+  n = 0;
+  const flaky = async u => { n++; return n === 1 ? { ok: false, status: 401, json: async () => ({}) } : { ok: true, status: 200, arrayBuffer: async () => png }; };
+  assert.deepEqual(await fetchImage({ kind: 'overview' }, { fetchImpl: flaky, republishDelayMs: 1 }), png);
+  assert.equal(rows.length, 2, 'the key was written again'); assert.equal(rows[1].key, rows[0].key, 'same key, not a new one');
+  // Still refused after that: reported, not retried forever.
+  n = 0;
+  await assert.rejects(fetchImage({ kind: 'overview' }, { fetchImpl: async () => { n++; return { ok: false, status: 401, json: async () => ({}) }; }, republishDelayMs: 1 }), e => e.status === 401);
+  assert.equal(n, 2);
+  // A failed write means nothing is signed and the user is told the service is not set up.
+  const brokenDb = { from: () => ({ upsert: async () => ({ error: { message: 'down' } }) }) };
+  const quiet = console.error; console.error = () => {};
+  await init(brokenDb);
+  console.error = quiet;
+  await assert.rejects(fetchImage({ kind: 'overview' }, { fetchImpl: okFetch }), e => /not set up/.test(e.userMessage));
+  await init(fakeDb);
+
   // ── keep-warm ──
-  delete process.env.SUPABASE_SERVICE_KEY;
-  assert.equal(startKeepWarm(), null, 'without a secret nothing is scheduled');
-  process.env.SUPABASE_SERVICE_KEY = 'svc';
+  const logged0 = console.log; console.log = () => {};
+  assert.equal(startKeepWarm({}), null, 'without a database client nothing is scheduled');
+  console.log = logged0;
   let pings = 0;
-  const timer = startKeepWarm({ intervalMs: 5, fetchImpl: async u => { pings++; assert.ok(new URL(u).searchParams.get('kind') === 'ping'); } });
-  await new Promise(r => setTimeout(r, 30)); clearInterval(timer);
+  const timer = startKeepWarm({ supabase: fakeDb, intervalMs: 5, fetchImpl: async u => { pings++; assert.ok(new URL(u).searchParams.get('kind') === 'ping'); } });
+  await new Promise(r => setTimeout(r, 60)); clearInterval(timer);
   assert.ok(pings >= 2);
 
   // ── commands ──

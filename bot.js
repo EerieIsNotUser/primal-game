@@ -71,7 +71,7 @@ client.once('ready', async () => {
   require('./modules/rollup')(client, { supabase });
 
   // Keep the website's picture service awake so the first /gamestats after a quiet spell is not slowed by a cold start.
-  require('./modules/siteImage').startKeepWarm();
+  require('./modules/siteImage').startKeepWarm({ supabase });
 });
 
 client.on('interactionCreate', async interaction => {
