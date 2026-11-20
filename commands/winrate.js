@@ -1,462 +1,108 @@
-const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
-const chrono = require('chrono-node');
-const { buildWinRateCardV2 } = require('../modules/chart');
+'use strict';
+const { SlashCommandBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { fetchImage, SiteImageError } = require('../modules/siteImage');
 
-// â”€â”€â”€ /winrate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Filterable win rate query: pick a category (dino/vehicle/weapon), a
-// specific item, optional server type / game mode / time range filters,
-// OR a natural-language date range ("January 15th through March 16th").
-// Returns "Winrate over X period, Y%" plus matching rounds as a pastebin-
-// style plain text attachment. Flags statistically significant deviations
-// from the item's all-time average.
+// ─── /winrate ─────────────────────────────────────────────────────────────────
+// One dinosaur, weapon or vehicle: its win rate with a 95% range, tier, rank, and how it moved day by day. The picture is drawn by
+// the website (/api/bot/image, kind "item") from the same daily totals and tier rules as its Win rate and Tier list pages.
 //
-// IMPORTANT CAVEAT â€” current data limitation:
-//   - Vehicles/Weapons: win rate here means "rounds where this item was the
-//     MVP, what % were SurvivorWin" â€” an MVP-correlation proxy, NOT true
-//     per-item usage win rate (that data doesn't exist in the current
-//     payload â€” no per-player/per-item win-loss tracking).
-//   - Dinos: presence-based win rate â€” "rounds where this dino was present,
-//     what % ended in DinoWin". Not per-player identity but valid as a proxy.
-//   - Pickups: not trackable per-item â€” only round-level adoption counts
-//     exist, not tied to a specific MVP.
+// The old version read raw rounds through a 1,000 row cap, kept a hard-coded item list that was missing newer items, and compared a
+// dino's win rate with a survivor baseline. This one counts every round, and the item list comes from the data.
+//
+// Win % methodology:
+//   Dinos    — dino-side win % in rounds where that dino (or one of its skins) was present
+//   Vehicles — survivor-side win % in rounds where that vehicle's driver was the MVP
+//   Weapons  — survivor-side win % in rounds where that weapon's holder was the MVP
 
-const VEHICLES = ['ATV', 'Golf Cart', 'Jeep', 'Hypercar', 'Pickup Truck', 'Police Car', 'Pumpkin Wagon', 'Buggy', 'Hybrid', 'Banana Car', 'Go-Kart', 'Bush Car', 'Muscle Car', 'Ambulance', 'Tow Truck', 'MRAP', 'Warthod', 'The Hornet', 'Humvee', 'Cyber-Beast', 'Monster Truck', 'Scrapper', 'Lunar Rover'];
-const WEAPONS = ['Pistol', 'Shotgun', 'MP5', 'Light Sniper', 'AR-15', 'AK-47', 'Crossbow', 'Heavy Sniper', 'AR-Dino', 'AR-Uni', 'P90', 'Water Gun', 'Raygun', 'Scar', 'Trike Shotgun', 'Minigun', 'IWS 2000', 'LMG', 'Deagle', 'Railgun', 'Plasma Rifle', 'Flamethrower', 'Tri-Beam', 'Scrapyard Shotgun', 'SPAS-12'];
-const DINOS = ['T-Rex', 'Pachy', 'Raptor', 'Carno', 'Dilo', 'Baryonyx', 'Cerato', 'Giga', 'Spino', 'Trike', 'Deino', 'Bronto', 'Exoraptor', 'Allo', 'Lava Giga', 'Mecha T-Rex', 'Mecha Raptor', 'Mecha Spino', 'The Monster', 'The Beast', 'Sabertooth', 'Zombie Spino', 'Skeleton T-Rex'];
-
-const GAME_MODE_OPTIONS = [
-  { name: 'Normal',         value: 'Normal'         },
-  { name: 'Double Trouble', value: 'Double Trouble' },
+const CATEGORIES = [
+  { name: 'Dinosaur', value: 'dino'    },
+  { name: 'Weapon',   value: 'weapon'  },
+  { name: 'Vehicle',  value: 'vehicle' },
 ];
-
-const TIME_RANGES = [
-  { name: 'Past week', value: '7' },
-  { name: 'Past month', value: '30' },
-  { name: 'Past 3 months', value: '90' },
-  { name: 'Past 6 months', value: '180' },
-  { name: 'All time', value: 'all' },
+const LOBBIES = [
+  { name: 'Main Game',         value: 'main'     },
+  { name: 'Pro Lobbies',       value: 'pro'      },
+  { name: 'Training Lobbies',  value: 'training' },
+  { name: 'All (no Training)', value: 'all'      },
 ];
+// The item view reads daily totals, so the shortest period is a week.
+const RANGES = [
+  { name: 'Past week',    value: '7d'   },
+  { name: 'Past month',   value: '30d'  },
+  { name: 'Past 90 days', value: '90d'  },
+  { name: 'Past year',    value: '365d' },
+  { name: 'All time',     value: 'all'  },
+];
+const SIZES = [
+  { name: 'Beginner lobbies (level 1–40)',   value: 'beginner' },
+  { name: 'Standard lobbies (level 41–250)', value: 'standard' },
+  { name: 'Pro-level lobbies (level 251+)',  value: 'pro'      },
+];
+const DB_KEY = { dino: 'dino', weapon: 'weapon_mvp', vehicle: 'vehicle_mvp' };
 
-function buildPastebinTable(rows) {
-  const COLUMNS = [
-    { key: 'played_at', label: 'Played At', width: 20 },
-    { key: 'map', label: 'Map', width: 14 },
-    { key: 'round_result', label: 'Result', width: 14 },
-    { key: 'game_mode', label: 'Mode', width: 14 },
-    { key: 'mvp_equipped_vehicle', label: 'MVP Vehicle', width: 14 },
-    { key: 'mvp_equipped_weapon', label: 'MVP Weapon', width: 14 },
-    { key: 'mvp_damage', label: 'MVP Dmg', width: 9 },
-  ];
+const ANALYTICS_URL = `${(process.env.WEBSITE_URL || 'https://www.primalpursuitrblx.com').replace(/\/+$/, '')}/dashboard/winrate`;
+const linkRow = () => new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Open win rate page').setStyle(ButtonStyle.Link).setURL(ANALYTICS_URL));
 
-  function formatCell(value, width) {
-    let str = value === null || value === undefined ? '-' : String(value);
-    if (str.length > width) str = str.slice(0, width - 1) + 'â€¦';
-    return str.padEnd(width);
-  }
-  function formatTimestamp(ts) {
-    return new Date(ts).toISOString().replace('T', ' ').slice(0, 19);
-  }
-
-  const header = COLUMNS.map(c => formatCell(c.label, c.width)).join(' | ');
-  const separator = COLUMNS.map(c => '-'.repeat(c.width)).join('-+-');
-  const lines = rows.map(row =>
-    COLUMNS.map(c => formatCell(c.key === 'played_at' ? formatTimestamp(row[c.key]) : row[c.key], c.width)).join(' | ')
-  );
-
-  return [header, separator, ...lines].join('\n');
-}
-
-// Hard cap on rows included in any single attachment â€” at 1,500+ daily
-// players this protects against generating multi-megabyte files for wide
-// date ranges. Above this cap, rows are evenly sampled across the full
-// range (not just truncated to the first N) so the file still represents
-// the whole period, not just its earliest portion.
-const MAX_ATTACHMENT_ROWS = 5000;
-
-function capAndSample(rows) {
-  if (rows.length <= MAX_ATTACHMENT_ROWS) {
-    return { rows, sampled: false, originalCount: rows.length };
-  }
-  const step = rows.length / MAX_ATTACHMENT_ROWS;
-  const sampled = [];
-  for (let i = 0; i < MAX_ATTACHMENT_ROWS; i++) {
-    sampled.push(rows[Math.floor(i * step)]);
-  }
-  return { rows: sampled, sampled: true, originalCount: rows.length };
-}
-
-// Parse a natural-language date range like "January 15th through March 16th"
-// Returns { startDate, endDate } or null if it couldn't be parsed.
-function parseDateRange(text) {
-  const results = chrono.parse(text, new Date());
-  if (results.length === 0) return null;
-
-  const result = results[0];
-  const startDate = result.start ? result.start.date() : null;
-  const endDate = result.end ? result.end.date() : (result.start ? result.start.date() : null);
-
-  if (!startDate) return null;
-
-  // If only a start was parsed (no range), treat as a single day
-  return { startDate, endDate: endDate ?? startDate };
-}
-
-async function queryWinRate(supabase, { category, item, gameMode, lobby, days, dateRange }) {
-  // For date ranges, fall back to direct query since RPC doesn't support arbitrary ranges
-  if (dateRange) {
-    let query = supabase.from('round_logs').select(
-      'played_at, map, round_result, game_mode, average_level, mvp_equipped_vehicle, mvp_equipped_weapon, mvp_damage, dinosaurs_used'
-    );
-    if (lobby) query = query.eq('place_id', lobby);
-    else        query = query.neq('place_id', '100026158235338').neq('place_id', '12631072275');
-    query = query.gte('played_at', dateRange.startDate.toISOString()).lte('played_at', dateRange.endDate.toISOString());
-    if (gameMode && gameMode !== 'all') query = query.eq('game_mode', gameMode);
-    if (category === 'vehicle') query = query.eq('mvp_equipped_vehicle', item);
-    else if (category === 'weapon') query = query.eq('mvp_equipped_weapon', item);
-    else if (category === 'dino')   query = query.contains('dinosaurs_used', [item]);
-    const { data, error } = await query.order('played_at', { ascending: true }).limit(100000);
-    if (error) { console.error('[winrate:dateRange]', error.message); return null; }
-    return data ?? [];
-  }
-
-  // Use RPC for standard time ranges â€” filters in DB, only matching rows transferred
-  const { data, error } = await supabase.rpc('get_winrate_item_data', {
-    p_category:  category,
-    p_item:      item,
-    p_days:      days === 'all' ? -1 : parseInt(days, 10),
-    p_game_mode: gameMode && gameMode !== 'all' ? gameMode : null,
-    p_lobby:     lobby ?? null,
-  });
-
-  if (error) {
-    console.error('[winrate:query]', error.message);
-    return null;
-  }
-  return data ?? [];
-}
-
-// Fetch ALL-TIME win/total counts for baseline comparison (not full rows â€”
-// at high round volume, fetching every row just to count wins is wasteful).
-// Excludes the selected period itself so the baseline isn't self-referential.
-async function queryAllTimeBaseline(supabase, { category, item, gameMode, excludeRange }) {
-  let baseQuery = supabase.from('round_logs').select('round_result', { count: 'exact' });
-
-  if (gameMode && gameMode !== 'all') baseQuery = baseQuery.eq('game_mode', gameMode);
-  if (category === 'vehicle') baseQuery = baseQuery.eq('mvp_equipped_vehicle', item);
-  else if (category === 'weapon') baseQuery = baseQuery.eq('mvp_equipped_weapon', item);
-  else if (category === 'dino') baseQuery = baseQuery.contains('dinosaurs_used', [item]);
-
-  if (excludeRange) {
-    // Two separate count queries (before range, after range) since Supabase
-    // can't easily express "NOT BETWEEN" â€” sum the two counts together.
-    const beforeQuery = supabase.from('round_logs').select('round_result', { count: 'exact' });
-    const afterQuery = supabase.from('round_logs').select('round_result', { count: 'exact' });
-
-    let bq = beforeQuery, aq = afterQuery;
-    if (gameMode && gameMode !== 'all') { bq = bq.eq('game_mode', gameMode); aq = aq.eq('game_mode', gameMode); }
-    if (category === 'vehicle') { bq = bq.eq('mvp_equipped_vehicle', item); aq = aq.eq('mvp_equipped_vehicle', item); }
-    else if (category === 'weapon') { bq = bq.eq('mvp_equipped_weapon', item); aq = aq.eq('mvp_equipped_weapon', item); }
-    else if (category === 'dino') { bq = bq.contains('dinosaurs_used', [item]); aq = aq.contains('dinosaurs_used', [item]); }
-
-    bq = bq.lt('played_at', excludeRange.startDate.toISOString());
-    aq = aq.gt('played_at', excludeRange.endDate.toISOString());
-
-    const [{ data: beforeData, count: beforeCount, error: beforeErr }, { data: afterData, count: afterCount, error: afterErr }] =
-      await Promise.all([bq, aq]);
-
-    if (beforeErr || afterErr) return null;
-
-    const beforeWins = (beforeData ?? []).filter(r => r.round_result === 'SurvivorWin').length;
-    const afterWins = (afterData ?? []).filter(r => r.round_result === 'SurvivorWin').length;
-
-    return { total: (beforeCount ?? 0) + (afterCount ?? 0), wins: beforeWins + afterWins };
-  }
-
-  const { data, count, error } = await baseQuery;
-  if (error || !data) return null;
-
-  const wins = data.filter(r => r.round_result === 'SurvivorWin').length;
-  return { total: count ?? data.length, wins };
-}
-
-function computeWinRate(rows) {
-  if (rows.length === 0) return null;
-  const wins = rows.filter(r => r.round_result === 'SurvivorWin').length;
-  return wins / rows.length;
-}
-
-// Two-proportion z-test: is the selected period's win rate significantly
-// different from the baseline rate, given both sample sizes?
-// Returns { zScore, pValue, significant } or null if either sample is too small.
-function testSignificance(p1, n1, p2, n2) {
-  if (n1 < 5 || n2 < 5) return null; // too small to say anything meaningful
-
-  const pooledP = (p1 * n1 + p2 * n2) / (n1 + n2);
-  const se = Math.sqrt(pooledP * (1 - pooledP) * (1 / n1 + 1 / n2));
-  if (se === 0) return null;
-
-  const z = (p1 - p2) / se;
-  // Two-tailed p-value approximation from z-score (normal distribution)
-  const pValue = 2 * (1 - normalCdf(Math.abs(z)));
-
-  return { zScore: z, pValue, significant: pValue < 0.05 };
-}
-
-function normalCdf(z) {
-  return (1 + erf(z / Math.sqrt(2))) / 2;
-}
-
-function erf(x) {
-  // Abramowitz-Stegun approximation, max error ~1.5e-7
-  const sign = x >= 0 ? 1 : -1;
-  x = Math.abs(x);
-  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
-  const t = 1 / (1 + p * x);
-  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-  return sign * y;
+// Names for autocomplete, from the data (last 90 days, at least 50 rounds), kept for ten minutes.
+let namesCache = { at: 0, value: null, loading: null };
+async function itemNames(supabase) {
+  if (namesCache.value && Date.now() - namesCache.at < 10 * 60_000) return namesCache.value;
+  namesCache.loading ??= Promise.resolve(supabase.rpc('bot_item_names')).then(({ data, error }) => {
+    if (error) throw new Error(error.message);
+    namesCache = { at: Date.now(), value: data ?? {}, loading: null };
+    return namesCache.value;
+  }).finally(() => { namesCache.loading = null; });
+  return namesCache.loading;
 }
 
 module.exports = {
+  _resetNames() { namesCache = { at: 0, value: null, loading: null }; },
   data: new SlashCommandBuilder()
     .setName('winrate')
-    .setDescription('Query win rate for a specific dino, vehicle, or weapon')
-    .addStringOption(opt =>
-      opt.setName('category')
-        .setDescription('What to check win rate for')
-        .setRequired(true)
-        .addChoices(
-          { name: 'Dino (presence-based win rate)', value: 'dino' },
-          { name: 'Vehicle (MVP-correlation)', value: 'vehicle' },
-          { name: 'Weapon (MVP-correlation)', value: 'weapon' },
-        )
-    )
-    .addStringOption(opt =>
-      opt.setName('item')
-        .setDescription('Specific item name')
-        .setRequired(true)
-        .setAutocomplete(true)
-    )
-    .addStringOption(opt =>
-      opt.setName('game_mode')
-        .setDescription('Game mode to filter by (default: all)')
-        .setRequired(false)
-        .addChoices(...GAME_MODE_OPTIONS.map(s => ({ name: s.name, value: s.value })))
-    )
-    .addStringOption(opt =>
-      opt.setName('dates')
-        .setDescription('Natural date range, e.g. "January 15th through March 16th" (overrides time_range)')
-        .setRequired(false)
-    )
-    .addStringOption(opt =>
-      opt.setName('time_range')
-        .setDescription('Time period (default: past month) â€” ignored if "dates" is set')
-        .addChoices(...TIME_RANGES.map(t => ({ name: t.name, value: t.value })))
-        .setRequired(false)
-    )
-    .addStringOption(opt =>
-      opt.setName('lobby')
-        .setDescription('Lobby type to filter by (default: main + pro, excludes training)')
-        .setRequired(false)
-        .addChoices(
-          { name: 'Main Game',        value: '12076775711'     },
-          { name: 'Pro Lobbies',      value: '16060525458'     },
-          { name: 'Training Lobbies', value: '100026158235338' },
-        )
-    ),
+    .setDescription('Win rate, tier and trend for one dinosaur, weapon or vehicle')
+    .addStringOption(opt => opt.setName('category').setDescription('What kind of item').setRequired(true).addChoices(...CATEGORIES))
+    .addStringOption(opt => opt.setName('item').setDescription('Which one (start typing to search)').setRequired(true).setAutocomplete(true))
+    .addStringOption(opt => opt.setName('lobby').setDescription('Lobby type (default: Main Game)').addChoices(...LOBBIES))
+    .addStringOption(opt => opt.setName('time_range').setDescription('Time period (default: past month)').addChoices(...RANGES))
+    .addStringOption(opt => opt.setName('lobby_size').setDescription('Only rounds from lobbies of this average level').addChoices(...SIZES)),
 
-  async autocomplete(interaction) {
-    const focused = interaction.options.getFocused(true);
-    if (focused.name !== 'item') return interaction.respond([]);
-
-    const category = interaction.options.getString('category');
-    const pool = category === 'dino' ? DINOS : category === 'vehicle' ? VEHICLES : category === 'weapon' ? WEAPONS : [];
-    const query = focused.value.toLowerCase();
-
-    const matches = pool
-      .filter(name => name.toLowerCase().includes(query))
-      .slice(0, 25)
-      .map(name => ({ name, value: name }));
-
-    return interaction.respond(matches);
+  async autocomplete(interaction, { supabase } = {}) {
+    const focused = interaction.options.getFocused().toLowerCase();
+    const cat = interaction.options.getString('category');
+    let choices = [];
+    try {
+      const all = await itemNames(supabase);
+      const keys = cat ? [DB_KEY[cat]] : Object.values(DB_KEY);
+      const seen = new Set();
+      for (const k of keys) for (const n of all[k] ?? []) if (!seen.has(n) && n.toLowerCase().includes(focused)) { seen.add(n); choices.push(n); }
+      choices = choices.slice(0, 25);
+    } catch (err) {
+      console.error('[winrate] autocomplete:', err.message);
+    }
+    await interaction.respond(choices.map(n => ({ name: n, value: n }))).catch(() => {});
   },
 
-  async execute(interaction, { supabase }) {
+  async execute(interaction, deps = {}) {
+    const get = deps.fetchImage ?? fetchImage;
     await interaction.deferReply();
-
-    const category     = interaction.options.getString('category');
-    const item         = interaction.options.getString('item');
-    const gameMode     = interaction.options.getString('game_mode') ?? null;
-    const lobby        = interaction.options.getString('lobby') ?? null;
-    const datesInput   = interaction.options.getString('dates');
-    const days         = interaction.options.getString('time_range') ?? '30';
-
-    // Dino win rate uses dinosaurs_used array â€” "rounds where this dino was
-    // present, what % ended in DinoWin". Not per-player identity, but a valid
-    // presence-based proxy for dino performance.
-
-    let dateRange = null;
-    if (datesInput) {
-      dateRange = parseDateRange(datesInput);
-      if (!dateRange) {
-        return interaction.editReply(
-          `âŒ Couldn't understand the date range "${datesInput}". Try something like ` +
-          `"January 15th through March 16th" or "last 2 weeks".`
-        );
-      }
-    }
-
-    const rows = await queryWinRate(supabase, { category, item, gameMode, lobby, days, dateRange });
-
-    if (rows === null) {
-      return interaction.editReply('âŒ Something went wrong querying round data.');
-    }
-
-    if (rows.length === 0) {
-      return interaction.editReply(`No rounds found for **${item}** with the selected filters.`);
-    }
-
-    const isDino = category === 'dino';
-
-    const winResultType2 = isDino ? 'DinoWin' : 'SurvivorWin';
-    const winRate = rows.length > 0
-      ? rows.filter(r => r.round_result === winResultType2).length / rows.length
-      : 0;
-    const winRatePct = Math.round(winRate * 100);
-
-    const lobbyLabel = lobby === '12076775711'     ? ' Â· Main Game'
-      : lobby === '16060525458'                    ? ' Â· Pro Lobbies (weighted)'
-      : lobby === '100026158235338'                ? ' Â· Training'
-      : '';
-    const periodLabel = (dateRange
-      ? `${dateRange.startDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} â€“ ${dateRange.endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`
-      : TIME_RANGES.find(t => t.value === days)?.name ?? 'selected period') + lobbyLabel;
-
-    const gameModeLabel = gameMode ?? 'All Modes';
-    const categoryLabel = category === 'vehicle' ? 'Car' : category === 'dino' ? 'Dino' : 'Gun';
-
-    // â”€â”€ Statistical significance check vs all-time baseline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const excludeRange = dateRange ?? (days !== 'all' ? {
-      startDate: new Date(Date.now() - parseInt(days, 10) * 24 * 60 * 60 * 1000),
-      endDate:   new Date(),
-    } : null);
-    const baseline = await queryAllTimeBaseline(supabase, { category, item, gameMode, excludeRange });
-    let significanceNote = '';
-
-    if (baseline && baseline.total >= 5) {
-      const baselineRate = baseline.wins / baseline.total;
-      const baselinePct = Math.round(baselineRate * 100);
-      const test = testSignificance(winRate, rows.length, baselineRate, baseline.total);
-
-      if (test && test.significant) {
-        const direction = winRate < baselineRate ? 'âš ï¸ SIGNIFICANTLY LOWER' : 'âš ï¸ SIGNIFICANTLY HIGHER';
-        significanceNote =
-          `\n\n${direction} than the all-time average for ${item} (${baselinePct}% across ${baseline.total} other rounds). ` +
-          `This difference is statistically significant (p < 0.05), not just normal variation.`;
-      } else if (test) {
-        significanceNote = `\n\nAll-time average for ${item}: ${baselinePct}% (${baseline.total} other rounds) â€” within normal variation.`;
-      }
-    }
-
-    // â”€â”€ Co-occurring items â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const coWeaponCounts  = new Map();
-    const coVehicleCounts = new Map();
-    for (const r of rows) {
-      if (category === 'vehicle' && r.mvp_equipped_weapon)  coWeaponCounts.set(r.mvp_equipped_weapon,  (coWeaponCounts.get(r.mvp_equipped_weapon)  || 0) + 1);
-      if (category === 'weapon'  && r.mvp_equipped_vehicle) coVehicleCounts.set(r.mvp_equipped_vehicle, (coVehicleCounts.get(r.mvp_equipped_vehicle) || 0) + 1);
-    }
-    const topCoWeapon  = [...coWeaponCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-    const topCoVehicle = [...coVehicleCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-    const coItemEntry  = category === 'vehicle' ? topCoWeapon : topCoVehicle;
-
-    // â”€â”€ Best map â€” proportional survivor win rate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const mapWinRates = new Map();
-    for (const r of rows) {
-      if (!r.map) continue;
-      if (!mapWinRates.has(r.map)) mapWinRates.set(r.map, { wins: 0, total: 0 });
-      const m = mapWinRates.get(r.map);
-      m.total++;
-      if (r.round_result === 'SurvivorWin') m.wins++;
-    }
-    const bestMapEntry = [...mapWinRates.entries()]
-      .filter(([, v]) => v.total >= 5)
-      .sort((a, b) => {
-        if (isDino) return (b[1].total - b[1].wins) / b[1].total - (a[1].total - a[1].wins) / a[1].total;
-        return (b[1].wins / b[1].total) - (a[1].wins / a[1].total);
-      })[0];
-    const bestMap = bestMapEntry ? {
-      name:           bestMapEntry[0],
-      survivorWinPct: isDino
-        ? Math.round(((bestMapEntry[1].total - bestMapEntry[1].wins) / bestMapEntry[1].total) * 100)
-        : Math.round((bestMapEntry[1].wins / bestMapEntry[1].total) * 100),
-      rounds:         bestMapEntry[1].total,
-    } : null;
-
-    // â”€â”€ Level brackets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const BRACKETS = [
-      { label: '1â€“20',    min: 1,   max: 20       },
-      { label: lobby === '16060525458' ? '35â€“40' : '21â€“40', min: 21, max: 40 },
-      { label: '41â€“100',  min: 41,  max: 100      },
-      { label: '100â€“250', min: 101, max: 250      },
-      { label: '250+',    min: 251, max: Infinity },
-    ];
-    const levelBrackets = BRACKETS.map(br => {
-      const brRows  = rows.filter(r => r.average_level != null && r.average_level >= br.min && r.average_level <= br.max);
-      const sWins   = brRows.filter(r => r.round_result === 'SurvivorWin').length;
-      return { label: br.label, total: brRows.length, survivorPct: brRows.length > 0 ? Math.round((sWins / brRows.length) * 100) : 0 };
-    }).filter(br => br.total >= 50);
-
-    // â”€â”€ Win rate card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const survivorWins = rows.filter(r => r.round_result === 'SurvivorWin').length;
-    const dinoWins     = rows.length - survivorWins;
-
-    // For dinos: flip the card so DinoWin is the "good" side (left, green)
-    const cardSurvivorWins = survivorWins;
-    const cardDinoWins     = dinoWins;
-
-    const resolvedCategory = category === 'dino' ? 'dino' : category;
-
-    // Game mode split
-    const normalRows = rows.filter(r => r.game_mode === 'Normal');
-    const dtRows     = rows.filter(r => r.game_mode === 'Double Trouble');
-    const winResultType = isDino ? 'DinoWin' : 'SurvivorWin';
-    const normalWins = normalRows.filter(r => r.round_result === winResultType).length;
-    const dtWins     = dtRows.filter(r => r.round_result === winResultType).length;
-    const gameModeData = {
-      normal: { rounds: normalRows.length, wins: normalWins },
-      dt:     { rounds: dtRows.length,     wins: dtWins     },
+    const o = interaction.options;
+    const item = (o.getString('item') ?? '').trim();
+    if (!item) return interaction.editReply('Pick an item to look up.');
+    const p = {
+      kind: 'item',
+      cat: o.getString('category'),
+      item,
+      lobby: o.getString('lobby') ?? 'main',
+      range: o.getString('time_range') ?? '30d',
+      size: o.getString('lobby_size') ?? 'all',
     };
-
-    const cardBuffer = await buildWinRateCardV2({
-      itemName:        item,
-      category:        resolvedCategory,
-      lookback:        periodLabel,
-      rounds:          rows.length,
-      survivorWins:    cardSurvivorWins,
-      dinoWins:        cardDinoWins,
-      overrideDinoPct: lobby === '16060525458' ? (isDino ? winRatePct : 100 - winRatePct) : null,
-      bestMap,
-      coItem:        coItemEntry ? { name: coItemEntry[0], count: coItemEntry[1] } : null,
-      baseline:      baseline && baseline.total >= 5 ? { rate: baseline.wins / baseline.total, rounds: baseline.total } : null,
-      levelBrackets: levelBrackets.map(br => ({
-        label:       br.label,
-        survivorPct: br.survivorPct,
-        total:       br.total,
-      })),
-      gameModeData,
-    });
-
-    // â”€â”€ Attachment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const { rows: tableRows, sampled, originalCount } = capAndSample(rows);
-    const table          = buildPastebinTable(tableRows);
-    const cardAttachment = new AttachmentBuilder(cardBuffer, { name: 'winrate.png' });
-    const txtAttachment  = new AttachmentBuilder(Buffer.from(table, 'utf8'), {
-      name: `winrate-${item.replace(/\s+/g, '-')}-${Date.now()}.txt`,
-    });
-
-    const replyPayload = { files: [cardAttachment, txtAttachment] };
-    if (sampled) {
-      replyPayload.content = `*Attachment: evenly-sampled ${tableRows.length.toLocaleString()} of ${originalCount.toLocaleString()} rounds â€” win rate calculated from all ${originalCount.toLocaleString()}.*`;
+    try {
+      const png = await get(p);
+      return await interaction.editReply({ files: [new AttachmentBuilder(png, { name: `winrate-${item.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png` })], components: [linkRow()] });
+    } catch (err) {
+      if (err instanceof SiteImageError && err.status === 404) return interaction.editReply(`No rounds found for **${item}** in that selection. Pick a name from the list, or try a longer period.`);
+      if (!(err instanceof SiteImageError) || err.status >= 500 || err.status === 0 || err.status === 401) console.error('[winrate]', err.message);
+      return interaction.editReply(err instanceof SiteImageError ? err.userMessage : 'Something went wrong drawing that.');
     }
-    return interaction.editReply(replyPayload);
   },
 };

@@ -5,6 +5,7 @@ const assert = require('assert');
 const { init, buildUrl, fetchImage, signParams, canonical, grainFor, SiteImageError, startKeepWarm } = require('../modules/siteImage');
 const gamestats = require('../commands/gamestats');
 const tierlist = require('../commands/tierlist');
+const winrate = require('../commands/winrate');
 
 (async () => {
   const NOW = Date.parse('2026-11-20T20:30:00Z');
@@ -132,6 +133,37 @@ const tierlist = require('../commands/tierlist');
   await tierlist.execute(i6, { fetchImage: async p => { asked.push(p); return png; } });
   assert.deepEqual(asked, [{ kind: 'tiers_weapon', lobby: 'pro', range: '30d', size: 'standard' }]);
   assert.equal(i6.sent[1].files.length, 1);
+
+  // winrate: one item card, defaults to main game and past month, 404 gets a plain message, autocomplete reads names from the data
+  assert.deepEqual(names(winrate), ['category', 'item', 'lobby', 'time_range', 'lobby_size']);
+  assert.ok(!winrate.data.toJSON().options.find(o => o.name === 'time_range').choices.some(c => c.value === '24h'), 'item view has no 24h option');
+  asked = [];
+  const i7 = interaction({ category: 'dino', item: ' T-Rex ' });
+  await winrate.execute(i7, { fetchImage: async p => { asked.push(p); return png; } });
+  assert.deepEqual(asked, [{ kind: 'item', cat: 'dino', item: 'T-Rex', lobby: 'main', range: '30d', size: 'all' }]);
+  assert.equal(i7.sent[1].files.length, 1); assert.equal(i7.sent[1].files[0].name, 'winrate-t-rex.png');
+  const i8 = interaction({ category: 'weapon', item: 'Nothing Real' });
+  await winrate.execute(i8, { fetchImage: async () => { throw new SiteImageError('x', { status: 404, userMessage: 'No rounds match that selection.' }); } });
+  assert.match(i8.sent[1], /No rounds found for \*\*Nothing Real\*\*/);
+  const i9 = interaction({ category: 'weapon', item: '   ' });
+  await winrate.execute(i9, { fetchImage: async () => assert.fail('no download for an empty name') });
+  assert.match(i9.sent[1], /Pick an item/);
+
+  let rpcCalls = 0;
+  const namesDb = { rpc: async name => { rpcCalls++; assert.equal(name, 'bot_item_names'); return { data: { dino: ['T-Rex', 'Mecha T-Rex', 'Allosaurus'], weapon_mvp: ['LMG', 'Tomato'], vehicle_mvp: ['The Monster'] }, error: null }; } };
+  const ac = (focused, cat) => { const out = []; return { out, options: { getFocused: () => focused, getString: () => cat }, respond: async x => { out.push(...x); } }; };
+  winrate._resetNames();
+  const a1 = ac('rex', 'dino'); await winrate.autocomplete(a1, { supabase: namesDb });
+  assert.deepEqual(a1.out.map(c => c.value), ['T-Rex', 'Mecha T-Rex']);
+  const a2 = ac('', 'weapon'); await winrate.autocomplete(a2, { supabase: namesDb });
+  assert.deepEqual(a2.out.map(c => c.value), ['LMG', 'Tomato'], 'only the chosen category is listed');
+  assert.equal(rpcCalls, 1, 'names are fetched once and kept');
+  winrate._resetNames();
+  const a3 = ac('x', 'dino'); const logged2 = console.error; console.error = () => {};
+  await winrate.autocomplete(a3, { supabase: { rpc: async () => ({ data: null, error: { message: 'down' } }) } });
+  console.error = logged2;
+  assert.deepEqual(a3.out, [], 'a database error gives an empty list, not a crash');
+  winrate._resetNames();
 
   console.log('siteImage: ok');
 })().catch(e => { console.error(e); process.exit(1); });
