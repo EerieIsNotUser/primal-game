@@ -103,4 +103,4 @@ function startKeepWarm({ supabase, intervalMs = 4 * 60_000, fetchImpl = fetch } 
   return timer;
 }
 
-module.exports = { init, startKeepWarm, fetchImage, buildUrl, signParams, canonical, grainFor, fingerprint, SiteImageError };
+module.exports = { init, startKeepWarm, getSecret, fetchImage, buildUrl, signParams, canonical, grainFor, fingerprint, SiteImageError };

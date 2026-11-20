@@ -7,6 +7,7 @@ const gamestats = require('../commands/gamestats');
 const tierlist = require('../commands/tierlist');
 const winrate = require('../commands/winrate');
 const mapchart = require('../commands/mapchart');
+const status = require('../commands/ping');
 
 (async () => {
   const NOW = Date.parse('2026-11-20T20:30:00Z');
@@ -180,6 +181,19 @@ const mapchart = require('../commands/mapchart');
   const i11 = interaction({});
   await mapchart.execute(i11, { fetchImage: async () => { throw new SiteImageError('x', { status: 404, userMessage: 'No rounds match that selection.' }); } });
   assert.equal(i11.sent[1], 'No rounds match that selection.');
+
+  // status: reports the database and the picture service separately, and never throws when one is down
+  const si = { sent: [], client: { ws: { ping: 42 } }, replied: false, deferred: false, deferReply: async function () { this.deferred = true; }, editReply: async function (x) { this.sent.push(x); } };
+  const okDb = { from: () => ({ select: () => ({ order: () => ({ limit: async () => ({ data: [{ day: '2026-11-20' }], error: null }) }) }) }) };
+  await status.execute(si, { supabase: okDb }, { getSecret: async () => 'k', fetchImpl: async () => ({ ok: true }) });
+  assert.match(si.sent[0], /Database: ok.*2026-11-20/); assert.match(si.sent[0], /Picture service: ok/); assert.match(si.sent[0], /bot ping 42/);
+  const si2 = { ...si, sent: [], deferred: false };
+  const badDb = { from: () => ({ select: () => ({ order: () => ({ limit: async () => ({ data: null, error: { message: 'down' } }) }) }) }) };
+  await status.execute(si2, { supabase: badDb }, { getSecret: async () => 'k', fetchImpl: async () => ({ ok: false, status: 401 }) });
+  assert.match(si2.sent[0], /Database: down/); assert.match(si2.sent[0], /Picture service: answered 401/);
+  const si3 = { ...si, sent: [], deferred: false };
+  await status.execute(si3, {}, { getSecret: async () => { throw new Error('no key'); }, fetchImpl: async () => ({ ok: true }) });
+  assert.match(si3.sent[0], /Database: not connected/); assert.match(si3.sent[0], /Picture service: no key/);
 
   console.log('siteImage: ok');
 })().catch(e => { console.error(e); process.exit(1); });
