@@ -14,6 +14,7 @@ function canonical(params) {
 // The signing key is derived from the database service key the site and this bot already both have (same derivation as the site's
 // lib/botImage/sign.js), so there is no separate secret to manage.
 const deriveSecret = root => (root ? crypto.createHmac('sha256', String(root)).update('primal-bot-image-v1').digest('hex') : '');
+const fingerprint = secret => (secret ? crypto.createHash('sha256').update('fp:' + String(secret)).digest('hex').slice(0, 8) : 'none');
 const defaultSecret = () => deriveSecret(process.env.SUPABASE_SERVICE_KEY);
 const signParams = (secret, params) => crypto.createHmac('sha256', String(secret)).update(canonical(params)).digest('hex');
 
@@ -52,7 +53,7 @@ async function fetchImage(params, { fetchImpl = fetch, retryDelayMs = 400, ...op
       try { reason = (await res.json())?.error ?? ''; } catch { /* not JSON */ }
       if (res.status === 404) throw new SiteImageError(`no rounds: ${reason}`, { status: 404, userMessage: 'No rounds match that selection.' });
       if (res.status === 400) throw new SiteImageError(`bad request: ${reason}`, { status: 400, userMessage: reason || 'That combination of options is not supported.' });
-      if (res.status === 401) throw new SiteImageError('site refused the signature (SUPABASE_SERVICE_KEY here differs from SUPABASE_SERVICE_ROLE_KEY on the site)', { status: 401 });
+      if (res.status === 401) throw new SiteImageError(`site refused the signature (SUPABASE_SERVICE_KEY here differs from SUPABASE_SERVICE_ROLE_KEY on the site; bot key fingerprint ${fingerprint(opts.secret ?? defaultSecret())})`, { status: 401 });
       last = new SiteImageError(`site answered ${res.status} ${reason}`, { status: res.status });
     } catch (err) {
       if (err instanceof SiteImageError && err.status && err.status < 500) throw err;
@@ -66,6 +67,7 @@ async function fetchImage(params, { fetchImpl = fetch, retryDelayMs = 400, ...op
 // A cheap signed request every few minutes keeps one site function warm. Failures are ignored: it only helps speed.
 function startKeepWarm({ intervalMs = 4 * 60_000, fetchImpl = fetch } = {}) {
   if (!process.env.SUPABASE_SERVICE_KEY) { console.log('[siteImage] SUPABASE_SERVICE_KEY is not set: /gamestats and /tierlist will say the picture service is not set up.'); return null; }
+  console.log(`[siteImage] signing key fingerprint ${fingerprint(defaultSecret())}`);
   const ping = () => fetchImpl(buildUrl({ kind: 'ping' }), { signal: AbortSignal.timeout(10_000) }).catch(() => {});
   ping();
   const timer = setInterval(ping, intervalMs);
