@@ -2,7 +2,7 @@
 // Signed picture requests and the two commands built on them, with the network and Discord faked.
 // Run: node tests/siteImage.test.js
 const assert = require('assert');
-const { buildUrl, fetchImage, signParams, canonical, grainFor, SiteImageError, startKeepWarm } = require('../modules/siteImage');
+const { deriveSecret, buildUrl, fetchImage, signParams, canonical, grainFor, SiteImageError, startKeepWarm } = require('../modules/siteImage');
 const gamestats = require('../commands/gamestats');
 const tierlist = require('../commands/tierlist');
 
@@ -45,9 +45,9 @@ const tierlist = require('../commands/tierlist');
   assert.equal(n, 1, 'a 404 is not retried');
 
   // ── keep-warm ──
-  delete process.env.BOT_IMAGE_SECRET;
+  delete process.env.SUPABASE_SERVICE_KEY;
   assert.equal(startKeepWarm(), null, 'without a secret nothing is scheduled');
-  process.env.BOT_IMAGE_SECRET = 's3';
+  process.env.SUPABASE_SERVICE_KEY = 'svc';
   let pings = 0;
   const timer = startKeepWarm({ intervalMs: 5, fetchImpl: async u => { pings++; assert.ok(new URL(u).searchParams.get('kind') === 'ping'); } });
   await new Promise(r => setTimeout(r, 30)); clearInterval(timer);
