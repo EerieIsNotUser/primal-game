@@ -1,162 +1,51 @@
+'use strict';
 const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
-const chrono = require('chrono-node');
-const { buildTierListCard } = require('../modules/chart');
+const { fetchImage, SiteImageError } = require('../modules/siteImage');
 
 // ─── /tierlist ────────────────────────────────────────────────────────────────
-// Manual tier list with optional natural-language date range.
-// Defaults to the last 7 days if no dates are provided.
+// Most used MVP weapons and vehicles, and how many players carried each pickup. One picture, drawn by the website from the
+// shared stats function (see /gamestats). The old version read raw rounds through a 1,000 row cap, so its counts were
+// wrong for any busy period; this one counts every round.
+//
+// Free-form dates ("January 15th through May 30th") are gone: the website only keeps full-day totals for long periods, so
+// the choices below are the periods that can be answered exactly.
 
-const PICKUP_FIELDS = [
-  { field: 'num_players_with_medkits',         label: 'Med Kit'         },
-  { field: 'num_players_with_fuelcans',         label: 'Fuel Can'        },
-  { field: 'num_players_with_toolkits',         label: 'Toolkit'         },
-  { field: 'num_players_with_dinotrackers',     label: 'Dino Tracker'    },
-  { field: 'num_players_with_mines',            label: 'Mine'            },
+const LOBBIES = [
+  { name: 'Main Game',         value: 'main'     },
+  { name: 'Pro Lobbies',       value: 'pro'      },
+  { name: 'Training Lobbies',  value: 'training' },
+  { name: 'All (no Training)', value: 'all'      },
 ];
-
-function parseDateRange(text) {
-  const results = chrono.parse(text, new Date());
-  if (results.length === 0) return null;
-  const result    = results[0];
-  const startDate = result.start ? result.start.date() : null;
-  const endDate   = result.end   ? result.end.date()   : (result.start ? result.start.date() : null);
-  if (!startDate) return null;
-  return { startDate, endDate: endDate ?? startDate };
-}
-
-async function fetchTopMvp(supabase, field, startDate, endDate, limit = 10) {
-  const { data, error } = await supabase
-    .from('round_logs')
-    .select(field)
-    .gte('played_at', startDate.toISOString())
-    .lte('played_at', endDate.toISOString())
-    .not(field, 'is', null)
-    .neq('place_id', '100026158235338')
-    .limit(100000);
-
-  if (error || !data) return [];
-
-  const counts = new Map();
-  for (const row of data) {
-    const val = row[field];
-    if (val) counts.set(val, (counts.get(val) || 0) + 1);
-  }
-
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([name, count]) => ({ name, count }));
-}
-
-async function fetchTopPickups(supabase, startDate, endDate) {
-  const { data, error } = await supabase
-    .from('round_logs')
-    .select(PICKUP_FIELDS.map(f => f.field).join(', '))
-    .gte('played_at', startDate.toISOString())
-    .lte('played_at', endDate.toISOString())
-    .neq('place_id', '100026158235338')
-    .limit(100000);
-
-  if (error || !data) return [];
-
-  const totals = {};
-  for (const pf of PICKUP_FIELDS) totals[pf.field] = 0;
-  for (const row of data) {
-    for (const pf of PICKUP_FIELDS) {
-      totals[pf.field] += row[pf.field] ?? 0;
-    }
-  }
-
-  return PICKUP_FIELDS
-    .map(pf => ({ name: pf.label, count: totals[pf.field] }))
-    .sort((a, b) => b.count - a.count);
-}
+const RANGES = [
+  { name: 'Past 24 hours', value: '24h'  },
+  { name: 'Past week',     value: '7d'   },
+  { name: 'Past month',    value: '30d'  },
+  { name: 'Past 90 days',  value: '90d'  },
+  { name: 'Past year',     value: '365d' },
+  { name: 'All time',      value: 'all'  },
+];
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('tierlist')
-    .setDescription('View ranked tier list for weapons, vehicles and item pickups')
-    .addStringOption(opt =>
-      opt.setName('dates')
-        .setDescription('Date range e.g. "January 15th through May 30th" (default: past 7 days)')
-        .setRequired(false)
-    ),
+    .setDescription('Most used MVP weapons and vehicles, and pickup adoption')
+    .addStringOption(opt => opt.setName('lobby').setDescription('Lobby type (default: Main Game)').addChoices(...LOBBIES))
+    .addStringOption(opt => opt.setName('time_range').setDescription('Time period (default: past week)').addChoices(...RANGES)),
 
-  async execute(interaction, { supabase }) {
+  async execute(interaction, deps = {}) {
+    const get = deps.fetchImage ?? fetchImage;
     await interaction.deferReply();
-
-    const datesInput = interaction.options.getString('dates');
-    let startDate, endDate, lookback;
-
-    if (datesInput) {
-      const parsed = parseDateRange(datesInput);
-      if (!parsed) {
-        return interaction.editReply(
-          `❌ Couldn't understand "${datesInput}". Try something like "January 15th through May 30th" or "last 30 days".`
-        );
-      }
-      startDate = parsed.startDate;
-      endDate   = parsed.endDate;
-      lookback  = `${startDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} – ${endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
-    } else {
-      endDate   = new Date();
-      startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      lookback  = 'Past 7 Days';
+    const p = {
+      kind: 'popular',
+      lobby: interaction.options.getString('lobby') ?? 'main',
+      range: interaction.options.getString('time_range') ?? '7d',
+    };
+    try {
+      const png = await get(p);
+      return await interaction.editReply({ files: [new AttachmentBuilder(png, { name: 'tierlist.png' })] });
+    } catch (err) {
+      if (!(err instanceof SiteImageError) || err.status >= 500 || err.status === 0 || err.status === 401) console.error('[tierlist]', err.message);
+      return interaction.editReply(err instanceof SiteImageError ? err.userMessage : 'Something went wrong drawing the tier list.');
     }
-
-    const [topWeapons, topVehicles, topPickups] = await Promise.all([
-      fetchTopMvp(supabase, 'mvp_equipped_weapon',  startDate, endDate),
-      fetchTopMvp(supabase, 'mvp_equipped_vehicle', startDate, endDate),
-      fetchTopPickups(supabase, startDate, endDate),
-    ]);
-
-    if (!topWeapons.length && !topVehicles.length && !topPickups.length) {
-      return interaction.editReply(`No round data found for the selected date range.`);
-    }
-
-    const totalWeaponRounds  = topWeapons.reduce((s, i)  => s + i.count, 0);
-    const totalVehicleRounds = topVehicles.reduce((s, i) => s + i.count, 0);
-    const totalPickupPlayers = topPickups.reduce((s, i)  => s + i.count, 0);
-
-    const cards = [
-      {
-        buffer: await buildTierListCard({
-          title:       'Top 10 MVP Weapons',
-          subtitle:    `Primal Pursuit · ${lookback}`,
-          stats: [{ label: 'MVP Rounds', value: totalWeaponRounds.toLocaleString(), color: '#ED4245' }],
-          lookback,
-          items:       topWeapons,
-          accentColor: '#ED4245',
-        }),
-        name: 'tierlist-weapons.png',
-      },
-      {
-        buffer: await buildTierListCard({
-          title:       'Top 10 MVP Vehicles',
-          subtitle:    `Primal Pursuit · ${lookback}`,
-          stats: [{ label: 'MVP Rounds', value: totalVehicleRounds.toLocaleString(), color: '#5865F2' }],
-          lookback,
-          items:       topVehicles,
-          accentColor: '#5865F2',
-        }),
-        name: 'tierlist-vehicles.png',
-      },
-      {
-        buffer: await buildTierListCard({
-          title:       'Pickup Item Adoption',
-          subtitle:    `Primal Pursuit · ${lookback}`,
-          stats: [{ label: 'Total Pickups', value: totalPickupPlayers.toLocaleString(), color: '#57F287' }],
-          lookback,
-          items:       topPickups,
-          accentColor: '#57F287',
-        }),
-        name: 'tierlist-pickups.png',
-      },
-    ];
-
-    return interaction.editReply({
-      content: `**Tier List** — ${lookback}`,
-      files: cards.map(c => new AttachmentBuilder(c.buffer, { name: c.name })),
-    });
   },
 };

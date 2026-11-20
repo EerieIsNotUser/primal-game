@@ -70,6 +70,8 @@ client.once('ready', async () => {
   });
   require('./modules/rollup')(client, { supabase });
 
+  // Keep the website's picture service awake so the first /gamestats after a quiet spell is not slowed by a cold start.
+  require('./modules/siteImage').startKeepWarm();
 });
 
 client.on('interactionCreate', async interaction => {
@@ -89,7 +91,6 @@ client.on('interactionCreate', async interaction => {
     const id = interaction.customId;
     let commandName = null;
     if (id.startsWith('mapchart_') || id.startsWith('preview_')) commandName = 'mapchart';
-    if (id.startsWith('piechart_'))                               commandName = 'piechart';
 
     if (commandName) {
       const command = client.commands.get(commandName);
@@ -109,8 +110,12 @@ client.on('interactionCreate', async interaction => {
   const command = client.commands.get(interaction.commandName);
   if (!command) return;
 
+  // How long each command takes, from Discord sending it to the reply being finished, so a slow one shows up in the logs.
+  const started = Date.now();
+  const sinceDiscord = started - interaction.createdTimestamp;
   try {
     await command.execute(interaction, { supabase });
+    console.log(`[cmd] /${interaction.commandName} ${Date.now() - interaction.createdTimestamp}ms total (${sinceDiscord}ms before the bot started, ${Date.now() - started}ms in the command)`);
   } catch (err) {
     console.error(`Error running /${interaction.commandName}:`, err);
     const reply = { content: '❌ Something went wrong running that command.', ephemeral: true };

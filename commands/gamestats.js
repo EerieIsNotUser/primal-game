@@ -1,339 +1,98 @@
+'use strict';
 const { SlashCommandBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { buildGameStatsOverviewCard, buildTierListCard, MAP_COLORS } = require('../modules/chart');
+const { fetchImage, SiteImageError } = require('../modules/siteImage');
 
 // ─── /gamestats ───────────────────────────────────────────────────────────────
-// Win rate + top 10 dinos/vehicles/weapons breakdown by lobby type.
-// Sent as four separate cards: overview, dinos, vehicles, weapons.
+// Win rates by map, mode and level, and the dinos, weapons and vehicles that win. The pictures are drawn by the website
+// (/api/bot/image) from the same database function the other stat commands use, so this command is one download, not a pile
+// of queries. Two pictures go out in a single message: the overview and the leaders.
 //
-// Lobby types:
-//   main     — 12076775711  (main game, default)
-//   pro      — 16060525458  (pro lobbies)
-//   training — 100026158235338 (training lobbies, opt-in only)
+// Win % methodology (unchanged):
+//   Dinos    — dino-side win % in rounds where that dino was present
+//   Vehicles — survivor-side win % in rounds where that vehicle's driver was the MVP
+//   Weapons  — survivor-side win % in rounds where that weapon's holder was the MVP
 //
-// Win % methodology:
-//   Dinos    — DinoWin % in rounds where that dino was present (presence proxy)
-//   Vehicles — SurvivorWin % in rounds where this vehicle was the MVP
-//   Weapons  — SurvivorWin % in rounds where this weapon was the MVP
-//   All show sample size prominently; < 20 rounds flagged with ⚠
+// Note: the website's balance pages have no 24 hour view; this command adds one.
 
-const LOBBY_TYPES = [
-  { name: 'Main Game',        value: 'main',     placeId: '12076775711'      },
-  { name: 'Pro Lobbies',      value: 'pro',      placeId: '16060525458'      },
-  { name: 'Training Lobbies', value: 'training', placeId: '100026158235338'  },
+const LOBBIES = [
+  { name: 'Main Game',        value: 'main'     },
+  { name: 'Pro Lobbies',      value: 'pro'      },
+  { name: 'Training Lobbies', value: 'training' },
+  { name: 'All (no Training)', value: 'all'     },
+];
+const RANGES = [
+  { name: 'Past 24 hours',   value: '24h'  },
+  { name: 'Past week',       value: '7d'   },
+  { name: 'Past month',      value: '30d'  },
+  { name: 'Past 90 days',    value: '90d'  },
+  { name: 'Past year',       value: '365d' },
+  { name: 'All time',        value: 'all'  },
+];
+const SIZES = [
+  { name: 'Beginner lobbies (level 1–40)',  value: 'beginner' },
+  { name: 'Standard lobbies (level 41–250)', value: 'standard' },
+  { name: 'Pro-level lobbies (level 251+)',  value: 'pro'      },
 ];
 
-const TIME_RANGES = [
-  { name: 'Past Week',    value: '7'   },
-  { name: 'Past Month',   value: '30'  },
-  { name: 'Past Quarter', value: '90'  },
-  { name: 'Past Year',    value: '365' },
-  { name: 'All Time',     value: 'all' },
-];
-
-// Where the full numbers live. WEBSITE_URL can override it (staging, a new domain).
-const ANALYTICS_URL = `${(process.env.WEBSITE_URL || 'https://www.primalpursuitrblx.com').replace(/\/+$/, '')}/dashboard`;
+const ANALYTICS_URL = `${(process.env.WEBSITE_URL || 'https://www.primalpursuitrblx.com').replace(/\/+$/, '')}/dashboard/gamestats`;
 const analyticsRow = () => new ActionRowBuilder().addComponents(
   new ButtonBuilder().setLabel('Open analytics').setStyle(ButtonStyle.Link).setURL(ANALYTICS_URL),
 );
 
-// ── Data fetching ─────────────────────────────────────────────────────────────
-async function fetchRows(supabase, placeId, days, minLevel = null, maxLevel = null) {
-  let query = supabase
-    .from('round_logs')
-    .select('id, round_result, map, game_mode, mvp_equipped_weapon, mvp_equipped_vehicle, dinosaurs_used, average_level')
-    .eq('place_id', placeId)
-    .limit(100000);
-
-  if (days !== 'all') {
-    const cutoff = new Date(Date.now() - parseInt(days, 10) * 24 * 60 * 60 * 1000);
-    query = query.gte('played_at', cutoff.toISOString());
-  }
-
-  if (minLevel !== null) query = query.gte('average_level', minLevel);
-  if (maxLevel !== null) query = query.lte('average_level', maxLevel);
-
-  const { data, error } = await query;
-  if (error || !data) return null;
-  return data;
-}
-
-// ── Stat builders ─────────────────────────────────────────────────────────────
-function buildOverviewStats(rows) {
-  const total        = rows.length;
-  const dinoWins     = rows.filter(r => r.round_result === 'DinoWin').length;
-  const survivorWins = total - dinoWins;
-  const dinoWinPct   = total > 0 ? Math.round((dinoWins / total) * 100) : 0;
-  const survWinPct   = 100 - dinoWinPct;
-
-  // Per-map breakdown
-  const maps = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
-  const mapLines = maps.map(map => {
-    const mapRows = rows.filter(r => r.map === map);
-    if (mapRows.length === 0) return null;
-    const mDino = mapRows.filter(r => r.round_result === 'DinoWin').length;
-    const mPct  = Math.round((mDino / mapRows.length) * 100);
-    const low   = mapRows.length < 20 ? ' ⚠' : '';
-    return `${map}: Dino ${mPct}% / Surv ${100 - mPct}% (${mapRows.length}r${low})`;
-  }).filter(Boolean);
-
-  // Game mode breakdown
-  const normal    = rows.filter(r => r.game_mode === 'Normal');
-  const dt        = rows.filter(r => r.game_mode === 'Double Trouble');
-  const normalPct = normal.length > 0 ? Math.round((normal.filter(r => r.round_result === 'DinoWin').length / normal.length) * 100) : null;
-  const dtPct     = dt.length > 0     ? Math.round((dt.filter(r => r.round_result === 'DinoWin').length / dt.length) * 100) : null;
-
-  const modePanelLines = [
-    normalPct !== null ? `Normal: Dino ${normalPct}% / Surv ${100 - normalPct}% (${normal.length}r)` : null,
-    dtPct     !== null ? `Double Trouble: Dino ${dtPct}% / Surv ${100 - dtPct}% (${dt.length}r)` : null,
-  ].filter(Boolean);
-
+// Exposed for tests.
+function paramsFrom(interaction) {
+  const o = interaction.options;
   return {
-    total, dinoWins, survivorWins, dinoWinPct, survWinPct,
-    mapLines, modePanelLines,
+    lobby: o.getString('lobby') ?? 'main',
+    range: o.getString('time_range') ?? '7d',
+    size:  o.getString('lobby_size') ?? 'all',
+    min:   o.getInteger('min_level') ?? null,
+    max:   o.getInteger('max_level') ?? null,
   };
 }
 
-function buildDinoStats(rows, limit = 10) {
-  const counts = new Map(); // dino → { dinoWins, total }
-  for (const row of rows) {
-    const dinos = Array.isArray(row.dinosaurs_used)
-      ? row.dinosaurs_used
-      : (row.dinosaurs_used ? [row.dinosaurs_used] : []);
-    for (const d of dinos) {
-      if (!counts.has(d)) counts.set(d, { dinoWins: 0, total: 0 });
-      const c = counts.get(d);
-      c.total++;
-      if (row.round_result === 'DinoWin') c.dinoWins++;
-    }
-  }
-
-  return [...counts.entries()]
-    .filter(([, c]) => c.total >= 5) // minimum sample
-    .map(([name, c]) => ({
-      name,
-      count: c.total,
-      winPct: Math.round((c.dinoWins / c.total) * 100),
-      lowSample: c.total < 20,
-    }))
-    .sort((a, b) => b.winPct - a.winPct || b.count - a.count)
-    .slice(0, limit);
-}
-
-function buildMvpStats(rows, field, limit = 10) {
-  // field: 'mvp_equipped_weapon' or 'mvp_equipped_vehicle'
-  // Win rate = SurvivorWin % when this item was MVP
-  const counts = new Map();
-  for (const row of rows) {
-    const item = row[field];
-    if (!item) continue;
-    if (!counts.has(item)) counts.set(item, { survivorWins: 0, total: 0 });
-    const c = counts.get(item);
-    c.total++;
-    if (row.round_result === 'SurvivorWin') c.survivorWins++;
-  }
-
-  return [...counts.entries()]
-    .filter(([, c]) => c.total >= 5)
-    .map(([name, c]) => ({
-      name,
-      count: c.total,
-      winPct: Math.round((c.survivorWins / c.total) * 100),
-      lowSample: c.total < 20,
-    }))
-    .sort((a, b) => b.winPct - a.winPct || b.count - a.count)
-    .slice(0, limit);
-}
-
-// ── Card builders ─────────────────────────────────────────────────────────────
-async function buildOverviewCard(stats, rows, lobbyLabel, lookback, supabase, roundIds) {
-  const { total, dinoWins, survivorWins } = stats;
-
-  const MAPS = ['Jungle', 'Canyon', 'Cavern', 'Primal Park'];
-  const mapData = MAPS.map(name => {
-    const mapRows     = rows.filter(r => r.map === name);
-    const mDinoWins   = mapRows.filter(r => r.round_result === 'DinoWin').length;
-    return { name, dinoWins: mDinoWins, survivorWins: mapRows.length - mDinoWins, total: mapRows.length };
-  }).filter(m => m.total > 0);
-
-  const modeMap = new Map();
-  for (const r of rows) {
-    const m = r.game_mode ?? 'Unknown';
-    if (!modeMap.has(m)) modeMap.set(m, { dinoWins: 0, survivorWins: 0, total: 0 });
-    const mc = modeMap.get(m);
-    mc.total++;
-    if (r.round_result === 'DinoWin') mc.dinoWins++; else mc.survivorWins++;
-  }
-  const modeData = [...modeMap.entries()].map(([name, c]) => ({ name, ...c }));
-
-  // ── Platform breakdown ──────────────────────────────────────────────────
-  let platformData = [];
-  if (roundIds?.length > 0) {
-    const { data: platformRows, error: platformErr } = await supabase
-      .from('round_players')
-      .select('platform')
-      .in('round_id', roundIds)
-      .not('platform', 'is', null);
-
-    if (!platformErr && platformRows?.length) {
-      const platformCounts = new Map();
-      for (const row of platformRows) {
-        platformCounts.set(row.platform, (platformCounts.get(row.platform) ?? 0) + 1);
-      }
-      platformData = [...platformCounts.entries()]
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count);
-    }
-  }
-
-  return buildGameStatsOverviewCard({
-    title:        `${lobbyLabel} — Win Rate Overview`,
-    subtitle:     `Primal Pursuit · ${lookback}`,
-    lookback,
-    totalRounds:  total,
-    dinoWins,
-    survivorWins,
-    maps:         mapData,
-    modes:        modeData,
-    platforms:    platformData,
-  });
-}
-
-async function buildDinoCard(dinoStats, lobbyLabel, lookback) {
-  // Convert to tierlist format: name + count (using winPct as display value)
-  // We show winPct in the name since tierlist sorts by count
-  const items = dinoStats.map(d => ({
-    name:  `${d.name}${d.lowSample ? ' ⚠' : ''} (${d.count}r)`,
-    count: d.winPct,
-  }));
-
-  const totalRounds = dinoStats.reduce((s, d) => s + d.count, 0);
-
-  return buildTierListCard({
-    title:       `${lobbyLabel} — Dino Win Rate`,
-    subtitle:    `Primal Pursuit · ${lookback} · Presence-based`,
-    stats: [
-      { label: 'Dinos Tracked', value: dinoStats.length.toString(), color: '#ED4245' },
-    ],
-    lookback,
-    items,
-    accentColor: '#ED4245',
-    unit: '%',
-  });
-}
-
-async function buildMvpCard(mvpStats, type, lobbyLabel, lookback) {
-  const color     = type === 'vehicle' ? '#5865F2' : '#ED4245';
-  const typeLabel = type === 'vehicle' ? 'Vehicle' : 'Weapon';
-  const winSide   = 'Survivor Win'; // MVP win rate = survivor win when this item is MVP
-
-  const items = mvpStats.map(d => ({
-    name:  `${d.name}${d.lowSample ? ' ⚠' : ''} (${d.count}r)`,
-    count: d.winPct,
-  }));
-
-  return buildTierListCard({
-    title:       `${lobbyLabel} — Top ${typeLabel}s`,
-    subtitle:    `Primal Pursuit · ${lookback} · MVP ${winSide} %`,
-    stats: [
-      { label: `${typeLabel}s Tracked`, value: mvpStats.length.toString(), color },
-    ],
-    lookback,
-    items,
-    accentColor: color,
-    unit: '%',
-  });
-}
-
-// ── Command ───────────────────────────────────────────────────────────────────
 module.exports = {
+  paramsFrom,
   data: new SlashCommandBuilder()
     .setName('gamestats')
-    .setDescription('Win rate and top performers by lobby type')
-    .addStringOption(opt =>
-      opt.setName('lobby')
-        .setDescription('Lobby type to analyse')
-        .setRequired(true)
-        .addChoices(...LOBBY_TYPES.map(l => ({ name: l.name, value: l.value })))
-    )
-    .addStringOption(opt =>
-      opt.setName('time_range')
-        .setDescription('Time period (default: past month)')
-        .setRequired(false)
-        .addChoices(...TIME_RANGES.map(t => ({ name: t.name, value: t.value })))
-    )
-    .addIntegerOption(opt =>
-      opt.setName('min_level')
-        .setDescription('Minimum average player level to include (e.g. 40 excludes beginner rounds)')
-        .setMinValue(1)
-        .setMaxValue(1000)
-        .setRequired(false)
-    )
-    .addIntegerOption(opt =>
-      opt.setName('max_level')
-        .setDescription('Maximum average player level to include (e.g. 100 excludes high-level rounds)')
-        .setMinValue(1)
-        .setMaxValue(1000)
-        .setRequired(false)
-    ),
+    .setDescription('Win rate by map, mode and level, plus the dinos, weapons and vehicles that win')
+    .addStringOption(opt => opt.setName('lobby').setDescription('Lobby type (default: Main Game)')
+      .addChoices(...LOBBIES))
+    .addStringOption(opt => opt.setName('time_range').setDescription('Time period (default: past week)')
+      .addChoices(...RANGES))
+    .addStringOption(opt => opt.setName('lobby_size').setDescription('Only rounds from lobbies of this average level (works for every time period)')
+      .addChoices(...SIZES))
+    .addIntegerOption(opt => opt.setName('min_level').setDescription('Minimum average level (past 24 hours or past week only)')
+      .setMinValue(1).setMaxValue(1000))
+    .addIntegerOption(opt => opt.setName('max_level').setDescription('Maximum average level (past 24 hours or past week only)')
+      .setMinValue(1).setMaxValue(1000)),
 
-  async execute(interaction, { supabase }) {
+  async execute(interaction, deps = {}) {
+    const get = deps.fetchImage ?? fetchImage;
     await interaction.deferReply();
+    const p = paramsFrom(interaction);
 
-    const lobbyValue = interaction.options.getString('lobby');
-    const days       = interaction.options.getString('time_range') ?? '30';
-    const minLevel   = interaction.options.getInteger('min_level') ?? null;
-    const maxLevel   = interaction.options.getInteger('max_level') ?? null;
-
-    const lobby = LOBBY_TYPES.find(l => l.value === lobbyValue);
-    if (!lobby) return interaction.editReply('❌ Invalid lobby type.');
-
-    const rows = await fetchRows(supabase, lobby.placeId, days, minLevel, maxLevel);
-
-    if (rows === null) {
-      return interaction.editReply('❌ Something went wrong fetching round data.');
-    }
-    if (rows.length === 0) {
-      return interaction.editReply(`No round data found for **${lobby.name}** in the selected time range.`);
+    if ((p.min != null || p.max != null) && !(p.range === '24h' || p.range === '7d')) {
+      return interaction.editReply('Level limits only work for the past 24 hours or past week. For longer periods use **lobby_size**.');
     }
 
-    const baseLookback = days === 'all' ? 'All Time' : `Past ${TIME_RANGES.find(t => t.value === days)?.name.replace('Past ', '') ?? days + ' Days'}`;
-    const levelSuffix  = minLevel || maxLevel
-      ? ` · Lvl ${minLevel ?? 1}–${maxLevel ?? '∞'}`
-      : '';
-    const lookback = baseLookback + levelSuffix;
-    const lobbyLabel  = lobby.name;
-
-    const overviewStats = buildOverviewStats(rows);
-    const dinoStats     = buildDinoStats(rows);
-    const vehicleStats  = buildMvpStats(rows, 'mvp_equipped_vehicle');
-    const weaponStats   = buildMvpStats(rows, 'mvp_equipped_weapon');
-
-    // Build all four cards
-    const roundIds = rows.map(r => r.id).filter(Boolean);
-    const [overviewBuf, dinoBuf, vehicleBuf, weaponBuf] = await Promise.all([
-      buildOverviewCard(overviewStats, rows, lobbyLabel, lookback, supabase, roundIds),
-      buildDinoCard(dinoStats,     lobbyLabel, lookback),
-      buildMvpCard(vehicleStats, 'vehicle', lobbyLabel, lookback),
-      buildMvpCard(weaponStats,  'weapon',  lobbyLabel, lookback),
-    ]);
-
-    // Send overview as the reply, then follow up with the three tier lists
-    await interaction.editReply({
-      content: `**${lobbyLabel} Stats** — ${lookback} · ${rows.length.toLocaleString()} rounds`,
-      files: [new AttachmentBuilder(overviewBuf, { name: 'gamestats-overview.png' })],
-      components: [analyticsRow()],
-    });
-
-    await interaction.followUp({
-      files: [new AttachmentBuilder(dinoBuf, { name: 'gamestats-dinos.png' })],
-    });
-
-    await interaction.followUp({
-      files: [new AttachmentBuilder(vehicleBuf, { name: 'gamestats-vehicles.png' })],
-    });
-
-    await interaction.followUp({
-      files: [new AttachmentBuilder(weaponBuf, { name: 'gamestats-weapons.png' })],
-    });
+    try {
+      const [overview, leaders] = await Promise.all([
+        get({ kind: 'overview', ...p }),
+        get({ kind: 'leaders', ...p }),
+      ]);
+      return await interaction.editReply({
+        files: [
+          new AttachmentBuilder(overview, { name: 'gamestats-overview.png' }),
+          new AttachmentBuilder(leaders,  { name: 'gamestats-leaders.png' }),
+        ],
+        components: [analyticsRow()],
+      });
+    } catch (err) {
+      if (!(err instanceof SiteImageError) || err.status >= 500 || err.status === 0 || err.status === 401) {
+        console.error('[gamestats]', err.message);
+      }
+      return interaction.editReply(err instanceof SiteImageError ? err.userMessage : 'Something went wrong drawing those stats.');
+    }
   },
 };
