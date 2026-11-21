@@ -27,13 +27,14 @@ const siteUrl = path => `${(process.env.WEBSITE_URL || 'https://www.primalpursui
 const linkRow = (label, path) => new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel(label).setStyle(ButtonStyle.Link).setURL(siteUrl(path)));
 
 // Defers, downloads the picture and replies once. `params` is what the site is asked for.
-async function reply(interaction, deps, { params, file, label, path, tag }) {
+async function reply(interaction, deps, { params, file, label, path, tag, notFound }) {
   const get = deps.fetchImage ?? fetchImage;
   try {
     const png = await get(params);
     return await interaction.editReply({ files: [new AttachmentBuilder(png, { name: file })], components: [linkRow(label, path)] });
   } catch (err) {
     if (!(err instanceof SiteImageError) || err.status >= 500 || err.status === 0 || err.status === 401) console.error(`[${tag}]`, err.message);
+    if (notFound && err instanceof SiteImageError && err.status === 404) return interaction.editReply(notFound);
     return interaction.editReply(err instanceof SiteImageError ? err.userMessage : 'Something went wrong drawing that.');
   }
 }

@@ -11,6 +11,7 @@ const status = require('../commands/ping');
 const breakdown = require('../commands/breakdown');
 const peaktimes = require('../commands/peaktimes');
 const matchupdata = require('../commands/matchupdata');
+const patchcompare = require('../commands/patchcompare');
 
 (async () => {
   const NOW = Date.parse('2026-11-20T20:30:00Z');
@@ -218,6 +219,28 @@ const matchupdata = require('../commands/matchupdata');
   const bi2 = interaction({ by: 'mode' });
   await breakdown.execute(bi2, { fetchImage: async () => { throw new SiteImageError('x', { status: 404, userMessage: 'No rounds match that selection.' }); } });
   assert.equal(bi2.sent[1], 'No rounds match that selection.');
+
+  // patchcompare: latest patch and 14 days by default; the patch comes from the log; a made-up name is refused; nothing-yet has its own message
+  assert.deepEqual(names(patchcompare), ['patch', 'before', 'lobby']);
+  assert.ok(!patchcompare.data.toJSON().options.find(o => o.name === 'lobby').choices.some(c => c.value === 'training'), 'no training lobbies');
+  asked = [];
+  const pc1 = interaction({}); await patchcompare.execute(pc1, { fetchImage: async p => { asked.push(p); return png; } });
+  assert.deepEqual(asked, [{ kind: 'patchcompare', lobby: 'main', range: '30d', size: 'all', before: 14, patch: null }]); assert.equal(pc1.sent[1].files.length, 1);
+  await patchcompare.execute(interaction({ patch: '2', before: 30, lobby: 'pro' }), { fetchImage: async p => { asked.push(p); return png; } });
+  assert.deepEqual(asked[1], { kind: 'patchcompare', lobby: 'pro', range: '30d', size: 'all', before: 30, patch: '2' });
+  const pc2 = interaction({ patch: 'Gun Rework' }); await patchcompare.execute(pc2, { fetchImage: async () => assert.fail('should not ask the site') });
+  assert.match(pc2.sent[1], /Pick a patch from the list/);
+  const pc3 = interaction({}); await patchcompare.execute(pc3, { fetchImage: async () => { throw new SiteImageError('x', { status: 404, userMessage: 'No rounds match that selection.' }); } });
+  assert.match(pc3.sent[1], /Nothing to compare yet/);
+  const patchDb = { from: table => { assert.equal(table, 'balance_changes'); const q = { select: () => q, order: () => q, limit: async () => ({ data: [{ id: 2, title: 'Gun Rework', changed_on: '2026-11-20' }, { id: 1, title: 'Vehicle tuning', changed_on: '2026-11-01' }], error: null }) }; return q; } };
+  const pa = ac('gun', null); await patchcompare.autocomplete(pa, { supabase: patchDb });
+  assert.deepEqual(pa.out, [{ name: 'Gun Rework (Nov 20)', value: '2' }]);
+  const pa2 = ac('', null); await patchcompare.autocomplete(pa2, { supabase: patchDb });
+  assert.equal(pa2.out.length, 2);
+  const pa3 = ac('', null); const logged3 = console.error; console.error = () => {};
+  await patchcompare.autocomplete(pa3, { supabase: { from: () => { throw new Error('down'); } } });
+  console.error = logged3;
+  assert.deepEqual(pa3.out, [], 'a database error gives an empty list');
 
   console.log('siteImage: ok');
 })().catch(e => { console.error(e); process.exit(1); });
